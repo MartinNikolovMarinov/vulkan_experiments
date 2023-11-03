@@ -15,3 +15,13 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/core)
 target_link_libraries(${PROJECT_NAME} PRIVATE fmt)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt)
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt/include)
+
+# glfw library:
+target_link_libraries(${PROJECT_NAME} PRIVATE glfw)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw/include/GLFW)
+
+# glm library:
+target_link_libraries(${PROJECT_NAME} PRIVATE glm)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/glm)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/glm)
