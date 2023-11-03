@@ -12,5 +12,13 @@ i32 main() {
     // Allocate and record a command buffer with the draw commands for every possible swap chain image
     // Draw frames by acquiring images, submitting the right draw command buffer and returning the images back to the swap chain
 
+    initCore();
+
+    // i32 ret = glfwInit();
+    // if (ret == GLFW_FALSE) {
+    //     fmt::print(stderr, "Failed to initialize GLFW\n");
+    //     return -1;
+    // }
+
     return 0;
 }

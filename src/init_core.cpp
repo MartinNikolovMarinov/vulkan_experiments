@@ -41,6 +41,4 @@ void initCore() {
         fmt::print(fmt::emphasis::bold, "[TRACE]:\n{}\n", trace);
         throw std::runtime_error("Assertion failed!");
     });
-
-    return cmdLineArgs;
 }
