@@ -31,10 +31,6 @@ struct std_allocator_static {
 #include <fmt/core.h>
 #include <fmt/color.h>
 
-// Define the command line arguments the application will use:
-
-void initCore();
-
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -42,3 +38,9 @@ void initCore();
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE // Vulkan uses depth range 0 to 1
 #include <glm/vec4.hpp>
 #include <glm/mat4x4.hpp>
+
+#include <vulkan/vulkan.h>
+
+#include <cstdlib>
+
+void initCore();
