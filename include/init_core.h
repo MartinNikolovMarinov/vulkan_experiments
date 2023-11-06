@@ -41,6 +41,6 @@ struct std_allocator_static {
 
 #include <vulkan/vulkan.h>
 
-#include <cstdlib>
-
 void initCore();
+
+using sb = core::str_builder<>;
