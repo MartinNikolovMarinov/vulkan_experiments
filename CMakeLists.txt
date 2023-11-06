@@ -20,7 +20,7 @@ target_include_directories(${PROJECT_NAME}
 )
 
 # Add compiler options:
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas)
+target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-function)
 
 # Core library:
 target_link_libraries(${PROJECT_NAME} PRIVATE core)

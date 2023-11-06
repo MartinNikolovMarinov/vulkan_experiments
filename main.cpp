@@ -37,7 +37,155 @@ struct Error {
     ErrorType type = None;
 };
 
+core::expected<core::arr<VkExtensionProperties>, Error> getAllSupportedVkExtensions() {
+    u32 extCount = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan instance extension enumeration failed", VulkanListExtensionsFailed });
+    }
+
+    core::arr<VkExtensionProperties> exts (extCount);
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, exts.data()) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan instance extension enumeration failed", VulkanListExtensionsFailed });
+    }
+
+    return exts;
+}
+
+core::expected<core::arr<VkLayerProperties>, Error> getAllSupportedVkValidationLayers() {
+    u32 layerCount = 0;
+    if (vkEnumerateInstanceLayerProperties(&layerCount, nullptr) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan instance layer enumeration failed", VulkanListValidationLayersFailed });
+    }
+
+    core::arr<VkLayerProperties> layers (layerCount);
+    if (vkEnumerateInstanceLayerProperties(&layerCount, layers.data()) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan instance layer enumeration failed", VulkanListValidationLayersFailed });
+    }
+
+    return layers;
+}
+
+core::expected<Error> checkExtensionSupport(
+    const core::arr<const char*>& extensions,
+    const core::arr<VkExtensionProperties>& supported
+) {
+    for (addr_size i = 0; i < extensions.len(); i++) {
+        const char* ext = extensions[i];
+        addr_size extLen = core::cptr_len(ext);
+        bool found = false;
+        for (addr_size j = 0; j < supported.len(); j++) {
+            const char* sup = supported[j].extensionName;
+            if (core::cptr_eq(ext, sup, extLen)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            Error err;
+            err.type = VulkanListExtensionsFailed;
+            err.description.append("Vulkan extension not supported: ");
+            err.description.append(ext);
+            return core::unexpected<Error>(core::move(err));
+        }
+    }
+
+    return {};
+}
+
+core::expected<Error> checkValidationLayerSupport(
+    const core::arr<const char*>& validationLayers,
+    const core::arr<VkLayerProperties>& supported
+) {
+    for (addr_size i = 0; i < validationLayers.len(); i++) {
+        const char* vlayer = validationLayers[i];
+        addr_size vlen = core::cptr_len(vlayer);
+        bool found = false;
+        for (addr_size j = 0; j < supported.len(); j++) {
+            const char* sup = supported[j].layerName;
+            if (core::cptr_eq(vlayer, sup, vlen)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            Error err;
+            err.type = VulkanListValidationLayersFailed;
+            err.description.append("Vulkan validation layer not supported: ");
+            err.description.append(vlayer);
+            return core::unexpected<Error>(core::move(err));
+        }
+    }
+
+    return {};
+}
+
+VkDebugUtilsMessengerCreateInfoEXT createDebugMessengerInfo() {
+    VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    createInfo.pNext = nullptr;
+    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+                                //  VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT; // TODO: Do I want this?
+    createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    createInfo.pfnUserCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                                    VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+                                    [[maybe_unused]] void* pUserData) -> VkBool32 {
+        fmt::print("Validation layer: {} ", pCallbackData->pMessage);
+        fmt::print("Severity: {} ", u64(messageSeverity));
+        fmt::print("Type: {} ", messageType);
+        fmt::print("\n");
+        return VK_FALSE;
+    };
+
+    return createInfo;
+}
+
+static VkResult wrap_vkCreateDebugUtilsMessengerEXT(
+    VkInstance instance,
+    const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkDebugUtilsMessengerEXT* pDebugMessenger
+) {
+    static PFN_vkCreateDebugUtilsMessengerEXT func = nullptr;
+
+    if (func == nullptr) {
+        func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+        if (func == nullptr) {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
+
+    return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+}
+
+static void wrap_vkDestroyDebugUtilsMessengerEXT(
+    VkInstance instance,
+    VkDebugUtilsMessengerEXT debugMessenger,
+    const VkAllocationCallbacks* pAllocator
+) {
+    static PFN_vkDestroyDebugUtilsMessengerEXT func = nullptr;
+
+    if (func == nullptr) {
+        func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (func == nullptr) {
+            return;
+        }
+    }
+
+    func(instance, debugMessenger, pAllocator);
+}
+
 struct Application {
+
+#ifndef NDEBUG
+    #define USE_VALIDATORS true
+#else
+    #define USE_VALIDATORS false
+#endif
+
     struct AppProps {
         i32 width;
         i32 height;
@@ -46,14 +194,17 @@ struct Application {
 
     core::expected<Error> run() {
         initCore();
+
         if (auto ret = initWindow(); ret.has_err()) {
             return core::unexpected<Error>(core::move(ret.err()));
         }
+
         if (auto ret = initVulkan(); ret.has_err()) {
             return core::unexpected<Error>(core::move(ret.err()));
         }
 
         mainLoop();
+
         cleanup();
 
         return {};
@@ -69,135 +220,9 @@ struct Application {
     }
 
 private:
-    template <typename CB>
-    static core::expected<Error> walkAllVkExtensions(CB cb) {
-        u32 extCount = 0;
-        if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan instance extension enumeration failed", VulkanListExtensionsFailed });
-        }
-
-        VkExtensionProperties exts[extCount];
-        if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, exts) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan instance extension enumeration failed", VulkanListExtensionsFailed });
-        }
-
-        for (u32 i = 0; i < extCount; ++i) {
-            if (!cb(exts[i])) return {};
-        }
-
-        return {};
-    }
-
-    template <typename CB>
-    static core::expected<Error> walkAllVkValidationLayers(CB cb) {
-        u32 layerCount = 0;
-        if (vkEnumerateInstanceLayerProperties(&layerCount, nullptr) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan instance layer enumeration failed", VulkanListValidationLayersFailed });
-        }
-
-        VkLayerProperties layers[layerCount];
-        if (vkEnumerateInstanceLayerProperties(&layerCount, layers) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan instance layer enumeration failed", VulkanListValidationLayersFailed });
-        }
-
-        for (u32 i = 0; i < layerCount; ++i) {
-            if (!cb(layers[i])) return {};
-        }
-
-        return {};
-    }
-
-    static core::expected<Error> checkExtensionsSupport(const core::arr<const char*>& extNames) {
-        for (u32 i = 0; i < extNames.len(); ++i) {
-            const char* extName = extNames[i];
-            addr_size extNameLen = core::cptr_len(extName);
-
-            bool found = false;
-            auto res = walkAllVkExtensions([&found, &extName, &extNameLen] (const VkExtensionProperties& e) {
-                bool shouldContinueWalk = true;
-                if (core::cptr_eq(e.extensionName, extName, extNameLen)) {
-                    found = true;
-                    shouldContinueWalk = false;
-                }
-                return shouldContinueWalk;
-            });
-            if (res.has_err()) {
-                // Walk failed.
-                return core::unexpected<Error>(core::move(res.err()));
-            }
-
-            if (!found) {
-                Error err;
-                err.type = VulkanInstanceCreationFailed;
-                err.description.append("Required Vulkan extension ");
-                err.description.append(extName, extNameLen);
-                err.description.append(" is not supported.");
-                return core::unexpected<Error>(core::move(err));
-            }
-        }
-
-        return {};
-    }
-
-    static core::expected<Error> checkValidationLayerSupport(const core::arr<const char*>& validationLayers) {
-        for (u32 i = 0; i < validationLayers.len(); ++i) {
-            const char* layerName = validationLayers[i];
-            addr_size layerNameLen = core::cptr_len(layerName);
-
-            bool found = false;
-            auto res = walkAllVkValidationLayers([&found, &layerName, &layerNameLen] (const VkLayerProperties& l) {
-                bool shouldContinueWalk = true;
-                if (core::cptr_eq(l.layerName, layerName, layerNameLen)) {
-                    found = true;
-                    shouldContinueWalk = false;
-                }
-                return shouldContinueWalk;
-            });
-            if (res.has_err()) {
-                // Walk failed.
-                return core::unexpected<Error>(core::move(res.err()));
-            }
-
-            if (!found) {
-                Error err;
-                err.type = VulkanInstanceCreationFailed;
-                err.description.append("Required Vulkan validation layer ");
-                err.description.append(layerName, layerNameLen);
-                err.description.append(" is not supported.");
-                return core::unexpected<Error>(core::move(err));
-            }
-        }
-
-        return {};
-    }
-
-    static VkResult createDebugUtilsMessengerEXT(
-        VkInstance instance,
-        const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-        const VkAllocationCallbacks* pAllocator,
-        VkDebugUtilsMessengerEXT* pDebugMessenger
-    ) {
-        auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-        if (func != nullptr) {
-            return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
-        }
-        else {
-            return VK_ERROR_EXTENSION_NOT_PRESENT;
-        }
-    }
-
-    static void destroyDebugUtilsMessengerEXT(
-        VkInstance instance,
-        VkDebugUtilsMessengerEXT debugMessenger,
-        const VkAllocationCallbacks* pAllocator
-    ) {
-        auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-        if (func != nullptr) {
-            func(instance, debugMessenger, pAllocator);
-        }
-    }
-
     core::expected<Error> initWindow() {
+        fmt::print("GLFW window initialization\n");
+
         if (i32 ret = glfwInit(); ret != GLFW_TRUE) {
             return core::unexpected<Error>({ "GLFW initialization failed", GLFWInitFailed });
         }
@@ -213,16 +238,37 @@ private:
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
         // Create a window:
-        m_window = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
-        if (!m_window) {
+        m_glfwWindow = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
+        if (!m_glfwWindow) {
             return core::unexpected<Error>({ "GLFW window creation failed", GLFWWindowCreationFailed });
         }
 
         return {};
     }
 
+#pragma region Initialize Vulkan
+
+    core::expected<Error> initVulkan() {
+        fmt::print("Vulkan initialization\n");
+
+        if (auto res = createInstance(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        #if USE_VALIDATORS
+            if (auto res = createDebugMessenger(); res.has_err()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        #endif
+
+        return {};
+    }
+
     core::expected<Error> createInstance() {
-        // Create Vulkan application info:
+        fmt::print("Vulkan instance creation\n");
+
+        // [STEP 1] Create Vulkan application info:
+        fmt::print("  [STEP 1] Create Vulkan application info\n");
 
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -233,63 +279,93 @@ private:
         appInfo.engineVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
         appInfo.apiVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
 
-        // Create Vulkan instance info:
+        // [STEP 2] Create Vulkan instance info:
+        fmt::print("  [STEP 2] Create Vulkan instance info\n");
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
 
-        // Extensions
-        {
-            // Required Extensions:
+        // [STEP 3] Extensions. Identify required Vulkan extensions and check if the system supports them:
+        fmt::print("  [STEP 3] Extensions\n");
 
-            // Add Vulkan extensions required by GLFW:
-            u32 glfwExtensionsCount = 0;
-            const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionsCount);
-            m_vkExtNames.append(glfwExtensions, glfwExtensionsCount);
+        {
+            // Get all supported Vulkan extensions:
+            {
+                auto res = getAllSupportedVkExtensions();
+                if (res.has_err()) {
+                    return core::unexpected<Error>(core::move(res.err()));
+                }
+                m_vkSupportedExtensions = core::move(res.value());
+            }
+
+            // Get all required Vulkan extensions:
+            {
+                // Required for GLFW:
+                u32 glfwExtensionsCount = 0;
+                const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionsCount);
+                if (!glfwExtensions) {
+                    // This would be highly unusual. Perhaps Vulkan is not available on this system?
+                    return core::unexpected<Error>({ "GLFW required extensions returned nullptr", VulkanInstanceCreationFailed });
+                }
+                m_vkActiveExtensions.append(glfwExtensions, glfwExtensionsCount);
+            }
 
             // Check if the required extensions are supported:
-            if (auto err = checkExtensionsSupport(m_vkExtNames); err.has_err()) {
+            if (auto err = checkExtensionSupport(m_vkActiveExtensions, m_vkSupportedExtensions); err.has_err()) {
                 return core::unexpected<Error>(core::move(err.err()));
             }
 
             // Optional Extensions:
 
-#ifndef NDEBUG
-            // Add Vulkan SDK standard debug extensions:
-            m_vkExtNames.append(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif
+            #if USE_VALIDATORS
+                // Add Vulkan SDK standard debug extensions:
+                m_vkActiveExtensions.append(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            #endif
 
             // Set the extensions in the createInfo:
 
-            createInfo.enabledExtensionCount = u32(m_vkExtNames.len());
-            createInfo.ppEnabledExtensionNames = m_vkExtNames.data();
+            createInfo.enabledExtensionCount = u32(m_vkActiveExtensions.len());
+            createInfo.ppEnabledExtensionNames = m_vkActiveExtensions.data();
         }
 
-#ifndef NDEBUG
-        // Validation layers:
-        {
+        // [STEP 4] Validation layers. Request the required validation layers if the program is build in debug mode:
+        fmt::print("  [STEP 4] Validation layers\n");
+
+        #if USE_VALIDATORS
+            // Get all supported Vulkan validation layers:
+            {
+                auto res = getAllSupportedVkValidationLayers();
+                if (res.has_err()) {
+                    return core::unexpected<Error>(core::move(res.err()));
+                }
+                m_vkSupportedValidationLayers = core::move(res.value());
+            }
+
             // Add Vulkan SDK standard validation layers:
-            m_vkValidationLayers.append("VK_LAYER_KHRONOS_validation");
+            m_vkActiveValidationLayers.append("VK_LAYER_KHRONOS_validation");
 
             // Check if the required validation layers are supported:
-            if (auto err = checkValidationLayerSupport(m_vkValidationLayers); err.has_err()) {
+            if (auto err = checkValidationLayerSupport(m_vkActiveValidationLayers, m_vkSupportedValidationLayers); err.has_err()) {
                 return core::unexpected<Error>(core::move(err.err()));
             }
 
             // Set the required validation layers in the createInfo:
-            createInfo.enabledLayerCount = m_vkValidationLayers.len();
-            createInfo.ppEnabledLayerNames = m_vkValidationLayers.data();
+            createInfo.enabledLayerCount = m_vkActiveValidationLayers.len();
+            createInfo.ppEnabledLayerNames = m_vkActiveValidationLayers.data();
 
+            // The following code is required to enable the validation layers during instance creation:
             VkDebugUtilsMessengerCreateInfoEXT dmcinfo = createDebugMessengerInfo();
             createInfo.pNext = reinterpret_cast<VkDebugUtilsMessengerCreateInfoEXT*>(&dmcinfo);
-        }
-#else
-        createInfo.enabledLayerCount = 0;
-#endif
+        #else
+            createInfo.enabledLayerCount = 0;
+            createInfo.pNext = nullptr;
+        #endif
 
-        // Create the Vulkan instance:
-        if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS) {
+        // [STEP 5] Finally. Create the Vulkan instance:
+        fmt::print("  [STEP 5] Create the Vulkan instance\n");
+
+        if (vkCreateInstance(&createInfo, nullptr, &m_vkInstance) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan instance creation failed", VulkanInstanceCreationFailed });
         }
 
@@ -298,80 +374,54 @@ private:
         return {};
     }
 
-    VkDebugUtilsMessengerCreateInfoEXT createDebugMessengerInfo() {
-        VkDebugUtilsMessengerCreateInfoEXT createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        createInfo.pNext = nullptr;
-        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-                                     VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                     VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                                 VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                                 VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-        createInfo.pfnUserCallback = [](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-                                        VkDebugUtilsMessageTypeFlagsEXT messageType,
-                                        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-                                        [[maybe_unused]] void* pUserData) -> VkBool32 {
-            fmt::print("Validation layer: {} ", pCallbackData->pMessage);
-            fmt::print("Severity: {} ", u64(messageSeverity));
-            fmt::print("Type: {} ", messageType);
-            fmt::print("\n");
-            return VK_FALSE;
-        };
-
-        return createInfo;
-    }
-
     core::expected<Error> createDebugMessenger() {
+        fmt::print("Creating Debug Messenger\n");
+
         VkDebugUtilsMessengerCreateInfoEXT createInfo = createDebugMessengerInfo();
-        if (createDebugUtilsMessengerEXT(m_instance, &createInfo, nullptr, &m_debugMessenger) != VK_SUCCESS) {
+        if (wrap_vkCreateDebugUtilsMessengerEXT(m_vkInstance, &createInfo, nullptr, &m_vkDebugMessenger) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan debug messenger creation failed", VulkanInstanceCreationFailed });
         }
         return {};
     }
 
-    core::expected<Error> initVulkan() {
-        if (auto err = createInstance(); err.has_err()) {
-            return core::unexpected<Error>(core::move(err.err()));
-        }
-#ifndef NDEBUG
-        if (auto err = createDebugMessenger(); err.has_err()) {
-            return core::unexpected<Error>(core::move(err.err()));
-        }
-#endif
-        return {};
-    }
+#pragma endregion
 
     void mainLoop() {
-        while (!glfwWindowShouldClose(m_window)) {
+        fmt::print("Starting Main loop\n");
+
+        while (!glfwWindowShouldClose(m_glfwWindow)) {
             glfwPollEvents();
         }
     }
 
     void cleanup() {
-#ifndef NDEBUG
-        destroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
-#endif
-        vkDestroyInstance(m_instance, nullptr);
-        glfwDestroyWindow(m_window);
+        fmt::print("Running cleaning up code\n");
+
+        #if USE_VALIDATORS
+            wrap_vkDestroyDebugUtilsMessengerEXT(m_vkInstance, m_vkDebugMessenger, nullptr);
+        #endif
+
+        vkDestroyInstance(m_vkInstance, nullptr);
+        glfwDestroyWindow(m_glfwWindow);
         glfwTerminate();
     }
 
-    GLFWwindow* m_window = nullptr;
+    // GLFW statekeeping:
+    GLFWwindow* m_glfwWindow = nullptr;
     i32 m_width = 0;
     i32 m_height = 0;
     const char* m_title = nullptr;
 
-    VkInstance m_instance = VK_NULL_HANDLE;
-    core::arr<const char*> m_vkExtNames;
-    core::arr<const char*> m_vkValidationLayers;
-#ifndef NDEBUG
-    VkDebugUtilsMessengerEXT m_debugMessenger;
-#endif
+    // Vulkan statekeeping:
+    VkInstance m_vkInstance = VK_NULL_HANDLE;
+    core::arr<const char*> m_vkActiveExtensions;
+    core::arr<VkExtensionProperties> m_vkSupportedExtensions;
+    core::arr<const char*> m_vkActiveValidationLayers;
+    core::arr<VkLayerProperties> m_vkSupportedValidationLayers;
+    VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
 };
 
 i32 main() {
-    // Create a VkInstance
     // Select a supported graphics card (VkPhysicalDevice)
     // Create a VkDevice and VkQueue for drawing and presentation
     // Create a window, window surface and swap chain
