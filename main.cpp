@@ -13,6 +13,9 @@ enum ErrorType : i32 {
     VulkanListValidationLayersFailed,
     VulkanNoSupportedDevicesErr,
     VulkanDeviceCreationFailed,
+    VulkanDebugMessengerCreationFailed,
+    VulkanExtensionNotSupported,
+    VulkanValidationLayerNotSupported,
 
     SENTINEL
 };
@@ -29,6 +32,9 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanListValidationLayersFailed:         return "VulkanListValidationLayersFailed";
         case VulkanNoSupportedDevicesErr:              return "VulkanNoSupportedDevicesErr";
         case VulkanDeviceCreationFailed:               return "VulkanDeviceCreationFailed";
+        case VulkanDebugMessengerCreationFailed:       return "VulkanDebugMessengerCreationFailed";
+        case VulkanExtensionNotSupported:              return "VulkanExtensionNotSupported";
+        case VulkanValidationLayerNotSupported:        return "VulkanValidationLayerNotSupported";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -86,7 +92,7 @@ core::expected<Error> checkExtensionSupport(
         }
         if (!found) {
             Error err;
-            err.type = VulkanListExtensionsFailed;
+            err.type = VulkanExtensionNotSupported;
             err.description.append("Vulkan extension not supported: ");
             err.description.append(ext);
             return core::unexpected<Error>(core::move(err));
@@ -113,7 +119,7 @@ core::expected<Error> checkValidationLayerSupport(
         }
         if (!found) {
             Error err;
-            err.type = VulkanListValidationLayersFailed;
+            err.type = VulkanValidationLayerNotSupported;
             err.description.append("Vulkan validation layer not supported: ");
             err.description.append(vlayer);
             return core::unexpected<Error>(core::move(err));
@@ -184,13 +190,14 @@ static void wrap_vkDestroyDebugUtilsMessengerEXT(
 
 struct QueueFamilyIndices {
     i64 graphicsFamily = -1;
+    i64 presentFamily = -1;
 
     bool isComplete() {
-        return graphicsFamily >= 0;
+        return graphicsFamily >= 0 && presentFamily >= 0;
     }
 };
 
-static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface) {
     QueueFamilyIndices indices;
 
     u32 queueFamilyCount = 0;
@@ -203,6 +210,12 @@ static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
         VkQueueFamilyProperties queueFamily = queueFamilies[i];
         if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             indices.graphicsFamily = i64(i);
+        }
+
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+        if (presentSupport) {
+            indices.presentFamily = i64(i);
         }
 
         if (indices.isComplete()) {
@@ -296,6 +309,10 @@ private:
                 return core::unexpected<Error>(core::move(res.err()));
             }
         #endif
+
+        if (auto res = createSurface(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
 
         if (auto res = pickPhysicalDevice(); res.has_err()) {
             return core::unexpected<Error>(core::move(res.err()));
@@ -423,7 +440,7 @@ private:
 
         VkDebugUtilsMessengerCreateInfoEXT createInfo = createDebugMessengerInfo();
         if (wrap_vkCreateDebugUtilsMessengerEXT(m_vkInstance, &createInfo, nullptr, &m_vkDebugMessenger) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan debug messenger creation failed", VulkanInstanceCreationFailed });
+            return core::unexpected<Error>({ "Vulkan debug messenger creation failed", VulkanDebugMessengerCreationFailed });
         }
         return {};
     }
@@ -441,15 +458,15 @@ private:
         core::arr<VkPhysicalDevice> devices (deviceCount);
         vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, devices.data());
 
-        auto isDeviceSutable = [](VkPhysicalDevice device) -> bool {
-            QueueFamilyIndices indices = findQueueFamilies(device);
+        auto isDeviceSutable = [](VkPhysicalDevice device, VkSurfaceKHR surface) -> bool {
+            QueueFamilyIndices indices = findQueueFamilies(device, surface);
             bool ret = indices.isComplete();
             return ret;
         };
 
         for (addr_size i = 0; i < devices.len(); i++) {
             VkPhysicalDevice device = devices[i];
-            if (isDeviceSutable(device)) {
+            if (isDeviceSutable(device, m_vkSurface)) {
                 m_vkPhysicalDevice = device;
                 break;
             }
@@ -467,18 +484,32 @@ private:
 
         // [STEP 1] Create a queue family info.
         fmt::print("  [STEP 1] Create a queue family info\n");
-        QueueFamilyIndices queueIndices = findQueueFamilies(m_vkPhysicalDevice);
+        QueueFamilyIndices queueIndices = findQueueFamilies(m_vkPhysicalDevice, m_vkSurface);
         if (!queueIndices.isComplete()) {
             return core::unexpected<Error>({ "Vulkan queue family indices not complete", VulkanDeviceCreationFailed });
         }
-        VkDeviceQueueCreateInfo queueCreateInfo{};
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.pNext = nullptr;
-        queueCreateInfo.queueFamilyIndex = u32(queueIndices.graphicsFamily);
-        queueCreateInfo.queueCount = 1;
 
-        f32 queuePriority = 1.0f;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
+        core::arr<VkDeviceQueueCreateInfo> queueCreateInfos;
+        core::hash_set<u32> uniqueQueueFamilies;
+        {
+            auto lval = u32(queueIndices.graphicsFamily);
+            uniqueQueueFamilies.put(lval);
+        }
+        {
+            auto lval = u32(queueIndices.presentFamily);
+            uniqueQueueFamilies.put(lval);
+        }
+
+        f32 queuePriority = 1.0f; // be careful where you place this.
+        uniqueQueueFamilies.keys([&](u32 key) {
+            VkDeviceQueueCreateInfo queueCreateInfo{};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.pNext = nullptr;
+            queueCreateInfo.queueFamilyIndex = key;
+            queueCreateInfo.queueCount = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.append(core::move(queueCreateInfo));
+        });
 
         // [STEP 2] Specify used device features.
         fmt::print("  [STEP 2] Specify used device features\n");
@@ -489,8 +520,8 @@ private:
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.pNext = nullptr;
-        createInfo.pQueueCreateInfos = &queueCreateInfo;
-        createInfo.queueCreateInfoCount = 1;
+        createInfo.pQueueCreateInfos = queueCreateInfos.data();
+        createInfo.queueCreateInfoCount = u32(queueCreateInfos.len());
         createInfo.pEnabledFeatures = &deviceFeatures;
 
         /* NOTE:
@@ -514,8 +545,19 @@ private:
         }
 
         // [STEP 5] Get the graphics queue.
-        fmt::print("  [STEP 5] Get the graphics queue\n");
+        fmt::print("  [STEP 5] Get the graphics queues\n");
         vkGetDeviceQueue(m_vkDevice, queueIndices.graphicsFamily, 0, &m_vkGraphicsQueue);
+        vkGetDeviceQueue(m_vkDevice, queueIndices.presentFamily, 0, &m_vkPresetQueue);
+
+        return {};
+    }
+
+    core::expected<Error> createSurface() {
+        fmt::print("Creating a Surface\n");
+
+        if (glfwCreateWindowSurface(m_vkInstance, m_glfwWindow, nullptr, &m_vkSurface) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan surface creation failed", VulkanDeviceCreationFailed });
+        }
 
         return {};
     }
@@ -538,6 +580,7 @@ private:
         #endif
 
         vkDestroyDevice(m_vkDevice, nullptr);
+        vkDestroySurfaceKHR(m_vkInstance, m_vkSurface, nullptr);
         vkDestroyInstance(m_vkInstance, nullptr);
         glfwDestroyWindow(m_glfwWindow);
         glfwTerminate();
@@ -559,6 +602,8 @@ private:
     VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
     VkDevice m_vkDevice = VK_NULL_HANDLE;
     VkQueue m_vkGraphicsQueue = VK_NULL_HANDLE;
+    VkSurfaceKHR m_vkSurface = VK_NULL_HANDLE;
+    VkQueue m_vkPresetQueue = VK_NULL_HANDLE;
 };
 
 i32 main() {
