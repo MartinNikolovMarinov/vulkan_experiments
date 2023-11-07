@@ -12,6 +12,7 @@ enum ErrorType : i32 {
     VulkanListExtensionsFailed,
     VulkanListValidationLayersFailed,
     VulkanNoSupportedDevicesErr,
+    VulkanDeviceCreationFailed,
 
     SENTINEL
 };
@@ -27,6 +28,7 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanListExtensionsFailed:               return "VulkanListExtensionsFailed";
         case VulkanListValidationLayersFailed:         return "VulkanListValidationLayersFailed";
         case VulkanNoSupportedDevicesErr:              return "VulkanNoSupportedDevicesErr";
+        case VulkanDeviceCreationFailed:               return "VulkanDeviceCreationFailed";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -299,6 +301,10 @@ private:
             return core::unexpected<Error>(core::move(res.err()));
         }
 
+        if (auto res = createLogicalDevice(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
         return {};
     }
 
@@ -456,6 +462,64 @@ private:
         return {};
     }
 
+    core::expected<Error> createLogicalDevice() {
+        fmt::print("Creating logical device\n");
+
+        // [STEP 1] Create a queue family info.
+        fmt::print("  [STEP 1] Create a queue family info\n");
+        QueueFamilyIndices queueIndices = findQueueFamilies(m_vkPhysicalDevice);
+        if (!queueIndices.isComplete()) {
+            return core::unexpected<Error>({ "Vulkan queue family indices not complete", VulkanDeviceCreationFailed });
+        }
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.pNext = nullptr;
+        queueCreateInfo.queueFamilyIndex = u32(queueIndices.graphicsFamily);
+        queueCreateInfo.queueCount = 1;
+
+        f32 queuePriority = 1.0f;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+        // [STEP 2] Specify used device features.
+        fmt::print("  [STEP 2] Specify used device features\n");
+        VkPhysicalDeviceFeatures deviceFeatures{};
+
+        // [STEP 3] Create the logical device info.
+        fmt::print("  [STEP 3] Create the logical device info\n");
+        VkDeviceCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.pNext = nullptr;
+        createInfo.pQueueCreateInfos = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
+        createInfo.pEnabledFeatures = &deviceFeatures;
+
+        /* NOTE:
+            Previous implementations of Vulkan made a distinction between instance and device specific validation
+            layers, but this is no longer the case. That means that the enabledLayerCount and ppEnabledLayerNames fields
+            of VkDeviceCreateInfo are ignored by up-to-date implementations. However, it is still a good idea to set
+            them anyway to be compatible with older implementations
+        */
+        createInfo.enabledLayerCount = 0;
+        #if USE_VALIDATORS
+            createInfo.enabledLayerCount = u32(m_vkActiveValidationLayers.len());
+            createInfo.ppEnabledLayerNames = m_vkActiveValidationLayers.data();
+        #else
+            createInfo.enabledLayerCount = 0;
+        #endif
+
+        // [STEP 4] Create the device.
+        fmt::print("  [STEP 4] Create the device\n");
+        if (vkCreateDevice(m_vkPhysicalDevice, &createInfo, nullptr, &m_vkDevice) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan logical device creation failed", VulkanDeviceCreationFailed });
+        }
+
+        // [STEP 5] Get the graphics queue.
+        fmt::print("  [STEP 5] Get the graphics queue\n");
+        vkGetDeviceQueue(m_vkDevice, queueIndices.graphicsFamily, 0, &m_vkGraphicsQueue);
+
+        return {};
+    }
+
 #pragma endregion
 
     void mainLoop() {
@@ -473,6 +537,7 @@ private:
             wrap_vkDestroyDebugUtilsMessengerEXT(m_vkInstance, m_vkDebugMessenger, nullptr);
         #endif
 
+        vkDestroyDevice(m_vkDevice, nullptr);
         vkDestroyInstance(m_vkInstance, nullptr);
         glfwDestroyWindow(m_glfwWindow);
         glfwTerminate();
@@ -486,13 +551,14 @@ private:
 
     // Vulkan statekeeping:
     VkInstance m_vkInstance = VK_NULL_HANDLE;
-    VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
     core::arr<const char*> m_vkActiveExtensions;
     core::arr<VkExtensionProperties> m_vkSupportedExtensions;
     core::arr<const char*> m_vkActiveValidationLayers;
     core::arr<VkLayerProperties> m_vkSupportedValidationLayers;
     VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
-    QueueFamilyIndices m_vkQueueFamilyIndices = {};
+    VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
+    VkDevice m_vkDevice = VK_NULL_HANDLE;
+    VkQueue m_vkGraphicsQueue = VK_NULL_HANDLE;
 };
 
 i32 main() {
@@ -510,6 +576,9 @@ i32 main() {
 
     constexpr const char* APP_TITLE = "Vulkan Example App";
     Application app = app.create({ 800, 600, APP_TITLE });
-    Expect(app.run(), "Run failed.");
+    if (auto res = app.run(); res.has_err()) {
+        fmt::print(stderr, "Error: {}\n", res.err().description.view().data());
+        return EXIT_FAILURE;
+    }
     return EXIT_SUCCESS;
 }
