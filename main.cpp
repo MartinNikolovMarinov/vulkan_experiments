@@ -16,6 +16,8 @@ enum ErrorType : i32 {
     VulkanDebugMessengerCreationFailed,
     VulkanExtensionNotSupported,
     VulkanValidationLayerNotSupported,
+    VulkanListDeviceExtensionsFailed,
+    VulkanSwapChainSupportQueryFailed,
 
     SENTINEL
 };
@@ -35,6 +37,8 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanDebugMessengerCreationFailed:       return "VulkanDebugMessengerCreationFailed";
         case VulkanExtensionNotSupported:              return "VulkanExtensionNotSupported";
         case VulkanValidationLayerNotSupported:        return "VulkanValidationLayerNotSupported";
+        case VulkanListDeviceExtensionsFailed:         return "VulkanListDeviceExtensionsFailed";
+        case VulkanSwapChainSupportQueryFailed:        return "VulkanSwapChainSupportQueryFailed";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -75,7 +79,21 @@ core::expected<core::arr<VkLayerProperties>, Error> getAllSupportedVkValidationL
     return layers;
 }
 
-core::expected<Error> checkExtensionSupport(
+core::expected<core::arr<VkExtensionProperties>, Error> getAllSupportedVkDeviceExtensions(VkPhysicalDevice device) {
+    u32 extCount = 0;
+    if (vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount, nullptr) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan device extension enumeration failed", VulkanListDeviceExtensionsFailed });
+    }
+
+    core::arr<VkExtensionProperties> exts (extCount);
+    if (vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount, exts.data()) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan device extension enumeration failed", VulkanListDeviceExtensionsFailed });
+    }
+
+    return exts;
+}
+
+bool checkExtensionSupport(
     const core::arr<const char*>& extensions,
     const core::arr<VkExtensionProperties>& supported
 ) {
@@ -91,18 +109,14 @@ core::expected<Error> checkExtensionSupport(
             }
         }
         if (!found) {
-            Error err;
-            err.type = VulkanExtensionNotSupported;
-            err.description.append("Vulkan extension not supported: ");
-            err.description.append(ext);
-            return core::unexpected<Error>(core::move(err));
+            return false;
         }
     }
 
-    return {};
+    return true;
 }
 
-core::expected<Error> checkValidationLayerSupport(
+bool checkValidationLayerSupport(
     const core::arr<const char*>& validationLayers,
     const core::arr<VkLayerProperties>& supported
 ) {
@@ -118,15 +132,11 @@ core::expected<Error> checkValidationLayerSupport(
             }
         }
         if (!found) {
-            Error err;
-            err.type = VulkanValidationLayerNotSupported;
-            err.description.append("Vulkan validation layer not supported: ");
-            err.description.append(vlayer);
-            return core::unexpected<Error>(core::move(err));
+            return false;
         }
     }
 
-    return {};
+    return true;
 }
 
 VkDebugUtilsMessengerCreateInfoEXT createDebugMessengerInfo() {
@@ -189,8 +199,8 @@ static void wrap_vkDestroyDebugUtilsMessengerEXT(
 }
 
 struct QueueFamilyIndices {
-    i64 graphicsFamily = -1;
-    i64 presentFamily = -1;
+    i64 graphicsFamily = -1; // queue family index for graphics commands
+    i64 presentFamily = -1; // queue family index for presentation commands
 
     bool isComplete() {
         return graphicsFamily >= 0 && presentFamily >= 0;
@@ -200,25 +210,31 @@ struct QueueFamilyIndices {
 static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface) {
     QueueFamilyIndices indices;
 
+    // Get the number of queue families:
     u32 queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
 
+    // Get the queue families:
     core::arr<VkQueueFamilyProperties> queueFamilies (queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
+    // Iterate over the queue families and find the ones that support graphics and presentation:
     for (addr_size i = 0; i < queueFamilies.len(); i++) {
         VkQueueFamilyProperties queueFamily = queueFamilies[i];
-        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+        VkBool32 graphicsSupport = (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) ? VK_TRUE : VK_FALSE;
+        if (graphicsSupport) {
             indices.graphicsFamily = i64(i);
         }
 
-        VkBool32 presentSupport = false;
+        // Check if the physical device supports presentation to the provided platform surface:
+        VkBool32 presentSupport = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
         if (presentSupport) {
             indices.presentFamily = i64(i);
         }
 
         if (indices.isComplete()) {
+            // Stop iterating once support for the required queue families is found.
             break;
         }
     }
@@ -226,6 +242,46 @@ static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKH
     return indices;
 }
 
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    core::arr<VkSurfaceFormatKHR> formats;
+    core::arr<VkPresentModeKHR> presentModes;
+};
+
+core::expected<SwapChainSupportDetails, Error> querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
+    SwapChainSupportDetails details;
+
+    // Get the surface capabilities:
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan surface capabilities query failed", VulkanSwapChainSupportQueryFailed });
+    }
+
+    u32 formatCount = 0;
+    if (vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan surface formats query failed", VulkanSwapChainSupportQueryFailed });
+    }
+
+    if (formatCount != 0) {
+        details.formats = core::arr<VkSurfaceFormatKHR> (formatCount);
+        if (vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data()) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan surface formats query failed", VulkanSwapChainSupportQueryFailed });
+        }
+    }
+
+    u32 presentModeCount = 0;
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan surface present modes query failed", VulkanSwapChainSupportQueryFailed });
+    }
+
+    if (presentModeCount != 0) {
+        details.presentModes = core::arr<VkPresentModeKHR> (presentModeCount);
+        if (vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data()) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan surface present modes query failed", VulkanSwapChainSupportQueryFailed });
+        }
+    }
+
+    return details;
+}
 
 struct Application {
 
@@ -286,7 +342,7 @@ private:
         // Disable window resizing:
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        // Create a window:
+        // Create the GLFW window:
         m_glfwWindow = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
         if (!m_glfwWindow) {
             return core::unexpected<Error>({ "GLFW window creation failed", GLFWWindowCreationFailed });
@@ -319,6 +375,10 @@ private:
         }
 
         if (auto res = createLogicalDevice(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createSwapChain(); res.has_err()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -373,8 +433,8 @@ private:
             }
 
             // Check if the required extensions are supported:
-            if (auto err = checkExtensionSupport(m_vkActiveExtensions, m_vkSupportedExtensions); err.has_err()) {
-                return core::unexpected<Error>(core::move(err.err()));
+            if (!checkExtensionSupport(m_vkActiveExtensions, m_vkSupportedExtensions)) {
+                return core::unexpected<Error>({ "Vulkan required extensions not supported", VulkanExtensionNotSupported });
             }
 
             // Optional Extensions:
@@ -407,8 +467,8 @@ private:
             m_vkActiveValidationLayers.append("VK_LAYER_KHRONOS_validation");
 
             // Check if the required validation layers are supported:
-            if (auto err = checkValidationLayerSupport(m_vkActiveValidationLayers, m_vkSupportedValidationLayers); err.has_err()) {
-                return core::unexpected<Error>(core::move(err.err()));
+            if (!checkValidationLayerSupport(m_vkActiveValidationLayers, m_vkSupportedValidationLayers)) {
+                return core::unexpected<Error>({ "Vulkan required validation layers not supported", VulkanValidationLayerNotSupported });
             }
 
             // Set the required validation layers in the createInfo:
@@ -448,35 +508,70 @@ private:
     core::expected<Error> pickPhysicalDevice() {
         fmt::print("Picking a physical device\n");
 
+        // Query the number of devices that support Vulkan;
         u32 deviceCount = 0;
         vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, nullptr);
-
         if (deviceCount == 0) {
             return core::unexpected<Error>({ "No vulkan compatible devices found", VulkanNoSupportedDevicesErr });
         }
 
-        core::arr<VkPhysicalDevice> devices (deviceCount);
-        vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, devices.data());
+        // Enumberate the physical devices and store info about them:
+        core::arr<VkPhysicalDevice> phyDevices (deviceCount);
+        vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, phyDevices.data());
 
-        auto isDeviceSutable = [](VkPhysicalDevice device, VkSurfaceKHR surface) -> bool {
-            QueueFamilyIndices indices = findQueueFamilies(device, surface);
-            bool ret = indices.isComplete();
-            return ret;
-        };
+        // Append the required device extensions:
+        m_vkActiveDeviceExtensions.append(VK_KHR_SWAPCHAIN_EXTENSION_NAME); // This application needs swapchain support.
 
-        for (addr_size i = 0; i < devices.len(); i++) {
-            VkPhysicalDevice device = devices[i];
-            if (isDeviceSutable(device, m_vkSurface)) {
+        // Pick the first suitable device:
+        for (addr_size i = 0; i < phyDevices.len(); i++) {
+            VkPhysicalDevice device = phyDevices[i];
+            auto res = isDeviceSutable(device, m_vkSurface);
+            if (res.has_err()) return core::unexpected<Error>(core::move(res.err()));
+            if (res.value() == true) {
                 m_vkPhysicalDevice = device;
                 break;
             }
         }
 
+        // Fail if no suitable device was found:
         if (m_vkPhysicalDevice == VK_NULL_HANDLE) {
             return core::unexpected<Error>({ "No vulkan suitable devices found", VulkanNoSupportedDevicesErr });
         }
 
         return {};
+    }
+
+    core::expected<bool, Error> isDeviceSutable(VkPhysicalDevice device, VkSurfaceKHR surface) {
+        // Get all supported extensions for the device:
+        auto supportedDeviceExt = getAllSupportedVkDeviceExtensions(device);
+        if (supportedDeviceExt.has_err()) {
+            return core::unexpected<Error>(core::move(supportedDeviceExt.err()));
+        }
+
+        // Check if the required extensions are supported:
+        if (!checkExtensionSupport(m_vkActiveDeviceExtensions, supportedDeviceExt.value())) {
+            return false;
+        }
+
+        // Check if the swapchain is adaquite:
+        {
+            auto res = querySwapChainSupport(device, surface);
+            if (res.has_err()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+            SwapChainSupportDetails swapChainSupport = core::move(res.value());
+            bool swapChainAdequate = !swapChainSupport.formats.empty() &&
+                                !swapChainSupport.presentModes.empty();
+
+            if (!swapChainAdequate) {
+                return false;
+            }
+        }
+
+        // The most important check for device suitability is the type of queue families supported by the device.
+        QueueFamilyIndices indices = findQueueFamilies(device, surface);
+        bool ret = indices.isComplete();
+        return ret;
     }
 
     core::expected<Error> createLogicalDevice() {
@@ -523,6 +618,8 @@ private:
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.queueCreateInfoCount = u32(queueCreateInfos.len());
         createInfo.pEnabledFeatures = &deviceFeatures;
+        createInfo.enabledExtensionCount = u32(m_vkActiveDeviceExtensions.len());
+        createInfo.ppEnabledExtensionNames = m_vkActiveDeviceExtensions.data();
 
         /* NOTE:
             Previous implementations of Vulkan made a distinction between instance and device specific validation
@@ -555,10 +652,17 @@ private:
     core::expected<Error> createSurface() {
         fmt::print("Creating a Surface\n");
 
+        // Vulkan can't interface with the windowing system directly to present images to the screen.
+        // It needs an intermediary object called a Surface, which is platform dependent and here it's handled by GLFW.
         if (glfwCreateWindowSurface(m_vkInstance, m_glfwWindow, nullptr, &m_vkSurface) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan surface creation failed", VulkanDeviceCreationFailed });
         }
 
+        return {};
+    }
+
+    core::expected<Error> createSwapChain() {
+        // The swap chain is essentially a queue of images that are waiting to be presented to the screen.
         return {};
     }
 
@@ -598,6 +702,7 @@ private:
     core::arr<VkExtensionProperties> m_vkSupportedExtensions;
     core::arr<const char*> m_vkActiveValidationLayers;
     core::arr<VkLayerProperties> m_vkSupportedValidationLayers;
+    core::arr<const char*> m_vkActiveDeviceExtensions;
     VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
     VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
     VkDevice m_vkDevice = VK_NULL_HANDLE;
@@ -606,19 +711,10 @@ private:
     VkQueue m_vkPresetQueue = VK_NULL_HANDLE;
 };
 
-i32 main() {
-    // Vulkan initialization steps:
-    // Create an instance (VkInstance)
-    // Select a supported graphics card (VkPhysicalDevice)
-    // Create a VkDevice and VkQueue for drawing and presentation
-    // Create a window, window surface and swap chain
-    // Wrap the swap chain images into VkImageView
-    // Create a render pass that specifies the render targets and usage
-    // Create framebuffers for the render pass
-    // Set up the graphics pipeline
-    // Allocate and record a command buffer with the draw commands for every possible swap chain image
-    // Draw frames by acquiring images, submitting the right draw command buffer and returning the images back to the swap chain
+// FIXME: Start From "Choosing the right settings for the swap chain" section here -
+// https://vulkan-tutorial.com/Drawing_a_triangle/Presentation/Swap_chain#page_Choosing-the-right-settings-for-the-swap-chain
 
+i32 main() {
     constexpr const char* APP_TITLE = "Vulkan Example App";
     Application app = app.create({ 800, 600, APP_TITLE });
     if (auto res = app.run(); res.has_err()) {
