@@ -11,6 +11,7 @@ enum ErrorType : i32 {
     VulkanInstanceCreationFailed,
     VulkanListExtensionsFailed,
     VulkanListValidationLayersFailed,
+    VulkanNoSupportedDevicesErr,
 
     SENTINEL
 };
@@ -25,6 +26,7 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanInstanceCreationFailed:             return "VulkanInstanceCreationFailed";
         case VulkanListExtensionsFailed:               return "VulkanListExtensionsFailed";
         case VulkanListValidationLayersFailed:         return "VulkanListValidationLayersFailed";
+        case VulkanNoSupportedDevicesErr:              return "VulkanNoSupportedDevicesErr";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -178,6 +180,38 @@ static void wrap_vkDestroyDebugUtilsMessengerEXT(
     func(instance, debugMessenger, pAllocator);
 }
 
+struct QueueFamilyIndices {
+    i64 graphicsFamily = -1;
+
+    bool isComplete() {
+        return graphicsFamily >= 0;
+    }
+};
+
+static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+    QueueFamilyIndices indices;
+
+    u32 queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+    core::arr<VkQueueFamilyProperties> queueFamilies (queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+    for (addr_size i = 0; i < queueFamilies.len(); i++) {
+        VkQueueFamilyProperties queueFamily = queueFamilies[i];
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            indices.graphicsFamily = i64(i);
+        }
+
+        if (indices.isComplete()) {
+            break;
+        }
+    }
+
+    return indices;
+}
+
+
 struct Application {
 
 #ifndef NDEBUG
@@ -260,6 +294,10 @@ private:
                 return core::unexpected<Error>(core::move(res.err()));
             }
         #endif
+
+        if (auto res = pickPhysicalDevice(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
 
         return {};
     }
@@ -384,6 +422,40 @@ private:
         return {};
     }
 
+    core::expected<Error> pickPhysicalDevice() {
+        fmt::print("Picking a physical device\n");
+
+        u32 deviceCount = 0;
+        vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, nullptr);
+
+        if (deviceCount == 0) {
+            return core::unexpected<Error>({ "No vulkan compatible devices found", VulkanNoSupportedDevicesErr });
+        }
+
+        core::arr<VkPhysicalDevice> devices (deviceCount);
+        vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, devices.data());
+
+        auto isDeviceSutable = [](VkPhysicalDevice device) -> bool {
+            QueueFamilyIndices indices = findQueueFamilies(device);
+            bool ret = indices.isComplete();
+            return ret;
+        };
+
+        for (addr_size i = 0; i < devices.len(); i++) {
+            VkPhysicalDevice device = devices[i];
+            if (isDeviceSutable(device)) {
+                m_vkPhysicalDevice = device;
+                break;
+            }
+        }
+
+        if (m_vkPhysicalDevice == VK_NULL_HANDLE) {
+            return core::unexpected<Error>({ "No vulkan suitable devices found", VulkanNoSupportedDevicesErr });
+        }
+
+        return {};
+    }
+
 #pragma endregion
 
     void mainLoop() {
@@ -414,14 +486,18 @@ private:
 
     // Vulkan statekeeping:
     VkInstance m_vkInstance = VK_NULL_HANDLE;
+    VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
     core::arr<const char*> m_vkActiveExtensions;
     core::arr<VkExtensionProperties> m_vkSupportedExtensions;
     core::arr<const char*> m_vkActiveValidationLayers;
     core::arr<VkLayerProperties> m_vkSupportedValidationLayers;
     VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
+    QueueFamilyIndices m_vkQueueFamilyIndices = {};
 };
 
 i32 main() {
+    // Vulkan initialization steps:
+    // Create an instance (VkInstance)
     // Select a supported graphics card (VkPhysicalDevice)
     // Create a VkDevice and VkQueue for drawing and presentation
     // Create a window, window surface and swap chain
