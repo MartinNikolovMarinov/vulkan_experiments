@@ -18,6 +18,8 @@ enum ErrorType : i32 {
     VulkanValidationLayerNotSupported,
     VulkanListDeviceExtensionsFailed,
     VulkanSwapChainSupportQueryFailed,
+    VulkanSwapChainCreationFailed,
+    VulkanSwapImageViewCreationFailed,
 
     SENTINEL
 };
@@ -39,6 +41,8 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanValidationLayerNotSupported:        return "VulkanValidationLayerNotSupported";
         case VulkanListDeviceExtensionsFailed:         return "VulkanListDeviceExtensionsFailed";
         case VulkanSwapChainSupportQueryFailed:        return "VulkanSwapChainSupportQueryFailed";
+        case VulkanSwapChainCreationFailed:            return "VulkanSwapChainCreationFailed";
+        case VulkanSwapImageViewCreationFailed:        return "VulkanSwapImageViewCreationFailed";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -283,6 +287,57 @@ core::expected<SwapChainSupportDetails, Error> querySwapChainSupport(VkPhysicalD
     return details;
 }
 
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const core::arr<VkSurfaceFormatKHR>& availableFormats) {
+    for (addr_size i = 0; i < availableFormats.len(); i++) {
+        VkSurfaceFormatKHR format = availableFormats[i];
+        if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+            format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return format;
+        }
+    }
+
+    if (availableFormats.len() > 0) {
+        return availableFormats[0];
+    }
+
+    return {};
+}
+
+VkPresentModeKHR chooseSwapPresentMode(const core::arr<VkPresentModeKHR>& availablePresentModes) {
+    for (addr_size i = 0; i < availablePresentModes.len(); i++) {
+        VkPresentModeKHR mode = availablePresentModes[i];
+        if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+            return mode;
+        }
+    }
+
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D chooseSwapExtent(GLFWwindow* glfwWindow , const VkSurfaceCapabilitiesKHR& capabilities) {
+    if (capabilities.currentExtent.width != core::MAX_U32) {
+        return capabilities.currentExtent;
+    }
+
+    i32 width, height;
+    glfwGetFramebufferSize(glfwWindow, &width, &height);
+
+    VkExtent2D actualExtent = { static_cast<u32>(width), static_cast<u32>(height) };
+
+    actualExtent.width = core::clamp<u32>(
+        capabilities.minImageExtent.width,
+        capabilities.maxImageExtent.width,
+        actualExtent.width
+    );
+    actualExtent.height = core::clamp<u32>(
+        capabilities.minImageExtent.height,
+        capabilities.maxImageExtent.height,
+        actualExtent.height
+    );
+
+    return actualExtent;
+}
+
 struct Application {
 
 #ifndef NDEBUG
@@ -379,6 +434,10 @@ private:
         }
 
         if (auto res = createSwapChain(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createImageViews(); res.has_err()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -662,7 +721,102 @@ private:
     }
 
     core::expected<Error> createSwapChain() {
-        // The swap chain is essentially a queue of images that are waiting to be presented to the screen.
+        SwapChainSupportDetails swapChainSupport;
+        {
+            auto ret = querySwapChainSupport(m_vkPhysicalDevice, m_vkSurface);
+            if (ret.has_err()) {
+                return core::unexpected<Error>(core::move(ret.err()));
+            }
+            swapChainSupport = core::move(ret.value());
+        }
+
+        VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+        VkExtent2D extent = chooseSwapExtent(m_glfwWindow, swapChainSupport.capabilities);
+
+        // Adding 1 to the minimum image count guarantees that we won't have to wait for internal driver operations to
+        // complete before acquiring another image to render to.
+        u32 imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+        if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+            // Don't exceed the maximum image capability.
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.pNext = nullptr;
+        createInfo.surface = m_vkSurface;
+
+        createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        QueueFamilyIndices indices = findQueueFamilies(m_vkPhysicalDevice, m_vkSurface);
+        u32 queueFamilyIndices[] = { u32(indices.graphicsFamily), u32(indices.presentFamily) };
+
+        if (indices.graphicsFamily != indices.presentFamily) {
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = queueFamilyIndices;
+        }
+        else {
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0; // Optional
+            createInfo.pQueueFamilyIndices = nullptr; // Optional
+        }
+
+        // To specify no transformation:
+        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+        createInfo.presentMode = presentMode;
+        createInfo.clipped = VK_TRUE;
+
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (vkCreateSwapchainKHR(m_vkDevice, &createInfo, nullptr, &m_vkSwapChain) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan swapchain creation failed", VulkanSwapChainCreationFailed });
+        }
+
+        vkGetSwapchainImagesKHR(m_vkDevice, m_vkSwapChain, &imageCount, nullptr);
+        m_vkSwapChainImages = core::arr<VkImage> (imageCount);
+        vkGetSwapchainImagesKHR(m_vkDevice, m_vkSwapChain, &imageCount, m_vkSwapChainImages.data());
+        m_vkSwapChainExtent = extent;
+        m_vkChainImageFormat = surfaceFormat.format;
+
+        return {};
+    }
+
+    core::expected<Error> createImageViews() {
+        m_vkSwapChainImageViews = core::arr<VkImageView> (m_vkSwapChainImages.len());
+
+        for (addr_size i = 0; i < m_vkSwapChainImages.len(); i++) {
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.pNext = nullptr;
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+            createInfo.format = m_vkChainImageFormat;
+
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+
+            if (vkCreateImageView(m_vkDevice, &createInfo, nullptr, &m_vkSwapChainImageViews[i]) != VK_SUCCESS) {
+                return core::unexpected<Error>({ "Vulkan image view creation failed",  });
+            }
+        }
+
         return {};
     }
 
@@ -683,6 +837,10 @@ private:
             wrap_vkDestroyDebugUtilsMessengerEXT(m_vkInstance, m_vkDebugMessenger, nullptr);
         #endif
 
+        for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
+            vkDestroyImageView(m_vkDevice, m_vkSwapChainImageViews[i], nullptr);
+        }
+        vkDestroySwapchainKHR(m_vkDevice, m_vkSwapChain, nullptr);
         vkDestroyDevice(m_vkDevice, nullptr);
         vkDestroySurfaceKHR(m_vkInstance, m_vkSurface, nullptr);
         vkDestroyInstance(m_vkInstance, nullptr);
@@ -709,10 +867,12 @@ private:
     VkQueue m_vkGraphicsQueue = VK_NULL_HANDLE;
     VkSurfaceKHR m_vkSurface = VK_NULL_HANDLE;
     VkQueue m_vkPresetQueue = VK_NULL_HANDLE;
+    VkSwapchainKHR m_vkSwapChain = VK_NULL_HANDLE;
+    core::arr<VkImage> m_vkSwapChainImages;
+    VkExtent2D m_vkSwapChainExtent = {};
+    core::arr<VkImageView> m_vkSwapChainImageViews;
+    VkFormat m_vkChainImageFormat = VK_FORMAT_UNDEFINED;
 };
-
-// FIXME: Start From "Choosing the right settings for the swap chain" section here -
-// https://vulkan-tutorial.com/Drawing_a_triangle/Presentation/Swap_chain#page_Choosing-the-right-settings-for-the-swap-chain
 
 i32 main() {
     constexpr const char* APP_TITLE = "Vulkan Example App";
