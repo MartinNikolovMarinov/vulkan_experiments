@@ -20,6 +20,11 @@ enum ErrorType : i32 {
     VulkanSwapChainSupportQueryFailed,
     VulkanSwapChainCreationFailed,
     VulkanSwapImageViewCreationFailed,
+    VulkanCreateShaderModuleFailed,
+    VulkanPipelineCreationFailed,
+    VulkanRenderPassCreationFailed,
+
+    FailedToLoadShader,
 
     SENTINEL
 };
@@ -43,6 +48,11 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanSwapChainSupportQueryFailed:        return "VulkanSwapChainSupportQueryFailed";
         case VulkanSwapChainCreationFailed:            return "VulkanSwapChainCreationFailed";
         case VulkanSwapImageViewCreationFailed:        return "VulkanSwapImageViewCreationFailed";
+        case VulkanCreateShaderModuleFailed:           return "VulkanCreateShaderModuleFailed";
+        case VulkanPipelineCreationFailed:             return "VulkanPipelineCreationFailed";
+        case VulkanRenderPassCreationFailed:           return "VulkanRenderPassCreationFailed";
+
+        case FailedToLoadShader:                       return "FailedToLoadShader";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -146,7 +156,6 @@ bool checkValidationLayerSupport(
 VkDebugUtilsMessengerCreateInfoEXT createDebugMessengerInfo() {
     VkDebugUtilsMessengerCreateInfoEXT createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    createInfo.pNext = nullptr;
     createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
                                 //  VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT; // TODO: Do I want this?
@@ -441,6 +450,14 @@ private:
             return core::unexpected<Error>(core::move(res.err()));
         }
 
+        if (auto res = createRenderPass(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createGraphicsPipeline(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
         return {};
     }
 
@@ -452,7 +469,6 @@ private:
 
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pNext = nullptr;
         appInfo.pApplicationName = m_title;
         appInfo.applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
         appInfo.pEngineName = "No Engine";
@@ -658,7 +674,6 @@ private:
         uniqueQueueFamilies.keys([&](u32 key) {
             VkDeviceQueueCreateInfo queueCreateInfo{};
             queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            queueCreateInfo.pNext = nullptr;
             queueCreateInfo.queueFamilyIndex = key;
             queueCreateInfo.queueCount = 1;
             queueCreateInfo.pQueuePriorities = &queuePriority;
@@ -673,7 +688,6 @@ private:
         fmt::print("  [STEP 3] Create the logical device info\n");
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.pNext = nullptr;
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.queueCreateInfoCount = u32(queueCreateInfos.len());
         createInfo.pEnabledFeatures = &deviceFeatures;
@@ -745,7 +759,6 @@ private:
 
         VkSwapchainCreateInfoKHR createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-        createInfo.pNext = nullptr;
         createInfo.surface = m_vkSurface;
 
         createInfo.minImageCount = imageCount;
@@ -797,8 +810,8 @@ private:
         for (addr_size i = 0; i < m_vkSwapChainImages.len(); i++) {
             VkImageViewCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.pNext = nullptr;
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+            createInfo.image = m_vkSwapChainImages[i];
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             createInfo.format = m_vkChainImageFormat;
 
             createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -815,6 +828,197 @@ private:
             if (vkCreateImageView(m_vkDevice, &createInfo, nullptr, &m_vkSwapChainImageViews[i]) != VK_SUCCESS) {
                 return core::unexpected<Error>({ "Vulkan image view creation failed",  });
             }
+        }
+
+        return {};
+    }
+
+    core::expected<Error> createGraphicsPipeline() {
+        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/01_hardcoded_triangle.vert.spv";
+
+        core::arr<u8> vertShaderCode;
+        {
+            auto res = os_read_entire_file(VERT_SHADER_PATH, vertShaderCode);
+            if (res.has_err()) {
+                Error err;
+                err.type = FailedToLoadShader;
+                err.description = "Failed to load vertex shader code: ";
+                err.description.append(VERT_SHADER_PATH);
+                err.description.append(", reason: ");
+                err.description.append(core::os_get_err_cptr(res.err()));
+                return core::unexpected(core::move(err));
+            }
+        }
+
+        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/01_hardcoded_triangle.frag.spv";
+
+        core::arr<u8> fragShaderCode;
+        {
+            auto res = os_read_entire_file(FRAG_SHADER_PATH, fragShaderCode);
+            if (res.has_err()) {
+                Error err;
+                err.type = FailedToLoadShader;
+                err.description = "Failed to load fragment shader code: ";
+                err.description.append(FRAG_SHADER_PATH);
+                err.description.append(", reason: ");
+                err.description.append(core::os_get_err_cptr(res.err()));
+                return core::unexpected(core::move(err));
+            }
+        }
+
+        VkShaderModule vertShaderModule;
+        {
+            auto ret = createShaderModule(vertShaderCode);
+            if (ret.has_err()) {
+                return core::unexpected<Error>(core::move(ret.err()));
+            }
+            vertShaderModule = core::move(ret.value());
+        }
+        defer { vkDestroyShaderModule(m_vkDevice, vertShaderModule, nullptr); };
+
+        VkShaderModule fragShaderModule;
+        {
+            auto ret = createShaderModule(fragShaderCode);
+            if (ret.has_err()) {
+                return core::unexpected<Error>(core::move(ret.err()));
+            }
+            fragShaderModule = core::move(ret.value());
+        }
+        defer { vkDestroyShaderModule(m_vkDevice, fragShaderModule, nullptr); };
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main"; // Entry point for the shader.
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main"; // Entry point for the shader.
+
+        [[maybe_unused]] VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+        static constexpr u32 DYNAMIC_STATES_COUNT = 2;
+        VkDynamicState dynamicStates[DYNAMIC_STATES_COUNT] = {
+            VK_DYNAMIC_STATE_VIEWPORT,
+            VK_DYNAMIC_STATE_SCISSOR
+        };
+
+        [[maybe_unused]] VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount = DYNAMIC_STATES_COUNT;
+        dynamicState.pDynamicStates = dynamicStates;
+
+        [[maybe_unused]] VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexAttributeDescriptionCount = 0;
+        vertexInputInfo.pVertexBindingDescriptions = nullptr;
+        vertexInputInfo.vertexBindingDescriptionCount = 0;
+        vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+
+        [[maybe_unused]] VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+        [[maybe_unused]] VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        [[maybe_unused]] VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_FALSE;
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+        rasterizer.depthBiasConstantFactor = 0.0f;
+        rasterizer.depthBiasClamp = 0.0f;
+        rasterizer.depthBiasSlopeFactor = 0.0f;
+
+        [[maybe_unused]] VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE; // TODO: Enable this for anti-aliasing.
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                              VK_COLOR_COMPONENT_G_BIT |
+                                              VK_COLOR_COMPONENT_B_BIT |
+                                              VK_COLOR_COMPONENT_A_BIT;
+        colorBlendAttachment.blendEnable = VK_FALSE;
+
+        [[maybe_unused]] VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.logicOpEnable = VK_FALSE;
+        colorBlending.logicOp = VK_LOGIC_OP_COPY;
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+        colorBlending.blendConstants[0] = 0.0f;
+        colorBlending.blendConstants[1] = 0.0f;
+        colorBlending.blendConstants[2] = 0.0f;
+        colorBlending.blendConstants[3] = 0.0f;
+
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 0;
+        pipelineLayoutInfo.pushConstantRangeCount = 0;
+
+        if (vkCreatePipelineLayout(m_vkDevice, &pipelineLayoutInfo, nullptr, &m_vkPipelineLayout) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan pipeline layout creation failed", VulkanPipelineCreationFailed });
+        }
+
+        return {};
+    }
+
+    core::expected<VkShaderModule, Error> createShaderModule(const core::arr<u8>& code) {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.len();
+        createInfo.pCode = reinterpret_cast<const u32*>(code.data());
+
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(m_vkDevice, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan shader module creation failed", VulkanCreateShaderModuleFailed });
+        }
+
+        return shaderModule;
+    }
+
+    core::expected<Error> createRenderPass() {
+        VkAttachmentDescription colorAttachment{};
+        colorAttachment.format = m_vkChainImageFormat;
+        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorAttachmentRef{};
+        colorAttachmentRef.attachment = 0;
+        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorAttachmentRef;
+
+        VkRenderPassCreateInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.attachmentCount = 1;
+        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.subpassCount = 1;
+        renderPassInfo.pSubpasses = &subpass;
+
+        if (vkCreateRenderPass(m_vkDevice, &renderPassInfo, nullptr, &m_vkRenderPass) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan render pass creation failed", VulkanRenderPassCreationFailed });
         }
 
         return {};
@@ -837,6 +1041,8 @@ private:
             wrap_vkDestroyDebugUtilsMessengerEXT(m_vkInstance, m_vkDebugMessenger, nullptr);
         #endif
 
+        vkDestroyPipelineLayout(m_vkDevice, m_vkPipelineLayout, nullptr);
+        vkDestroyRenderPass(m_vkDevice, m_vkRenderPass, nullptr);
         for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
             vkDestroyImageView(m_vkDevice, m_vkSwapChainImageViews[i], nullptr);
         }
@@ -872,6 +1078,9 @@ private:
     VkExtent2D m_vkSwapChainExtent = {};
     core::arr<VkImageView> m_vkSwapChainImageViews;
     VkFormat m_vkChainImageFormat = VK_FORMAT_UNDEFINED;
+    VkPipelineLayout m_vkPipelineLayout = VK_NULL_HANDLE;
+    VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
+    VkPipelineLayout m_vkGraphicsPipeline = VK_NULL_HANDLE;
 };
 
 i32 main() {
