@@ -23,6 +23,11 @@ enum ErrorType : i32 {
     VulkanCreateShaderModuleFailed,
     VulkanPipelineCreationFailed,
     VulkanRenderPassCreationFailed,
+    VulkanFramebufferCreationFailed,
+    VulkanCommandPoolCreationFailed,
+    VulkanCommandBufferCreationFailed,
+    VulkanBeginCommandBufferFailed,
+    VulkanEndCommandBufferFailed,
 
     FailedToLoadShader,
 
@@ -51,6 +56,11 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanCreateShaderModuleFailed:           return "VulkanCreateShaderModuleFailed";
         case VulkanPipelineCreationFailed:             return "VulkanPipelineCreationFailed";
         case VulkanRenderPassCreationFailed:           return "VulkanRenderPassCreationFailed";
+        case VulkanFramebufferCreationFailed:          return "VulkanFramebufferCreationFailed";
+        case VulkanCommandPoolCreationFailed:          return "VulkanCommandPoolCreationFailed";
+        case VulkanCommandBufferCreationFailed:        return "VulkanCommandBufferCreationFailed";
+        case VulkanBeginCommandBufferFailed:           return "VulkanBeginCommandBufferFailed";
+        case VulkanEndCommandBufferFailed:             return "VulkanEndCommandBufferFailed";
 
         case FailedToLoadShader:                       return "FailedToLoadShader";
 
@@ -455,6 +465,18 @@ private:
         }
 
         if (auto res = createGraphicsPipeline(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createFramebuffers(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createCommandPool(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createCommandBuffer(); res.has_err()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -898,7 +920,7 @@ private:
         fragShaderStageInfo.module = fragShaderModule;
         fragShaderStageInfo.pName = "main"; // Entry point for the shader.
 
-        [[maybe_unused]] VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
         static constexpr u32 DYNAMIC_STATES_COUNT = 2;
         VkDynamicState dynamicStates[DYNAMIC_STATES_COUNT] = {
@@ -906,29 +928,29 @@ private:
             VK_DYNAMIC_STATE_SCISSOR
         };
 
-        [[maybe_unused]] VkPipelineDynamicStateCreateInfo dynamicState{};
+        VkPipelineDynamicStateCreateInfo dynamicState{};
         dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         dynamicState.dynamicStateCount = DYNAMIC_STATES_COUNT;
         dynamicState.pDynamicStates = dynamicStates;
 
-        [[maybe_unused]] VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         vertexInputInfo.vertexAttributeDescriptionCount = 0;
         vertexInputInfo.pVertexBindingDescriptions = nullptr;
         vertexInputInfo.vertexBindingDescriptionCount = 0;
         vertexInputInfo.pVertexAttributeDescriptions = nullptr;
 
-        [[maybe_unused]] VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-        [[maybe_unused]] VkPipelineViewportStateCreateInfo viewportState{};
+        VkPipelineViewportStateCreateInfo viewportState{};
         viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewportState.viewportCount = 1;
         viewportState.scissorCount = 1;
 
-        [[maybe_unused]] VkPipelineRasterizationStateCreateInfo rasterizer{};
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
@@ -941,7 +963,7 @@ private:
         rasterizer.depthBiasClamp = 0.0f;
         rasterizer.depthBiasSlopeFactor = 0.0f;
 
-        [[maybe_unused]] VkPipelineMultisampleStateCreateInfo multisampling{};
+        VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         multisampling.sampleShadingEnable = VK_FALSE; // TODO: Enable this for anti-aliasing.
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -953,7 +975,7 @@ private:
                                               VK_COLOR_COMPONENT_A_BIT;
         colorBlendAttachment.blendEnable = VK_FALSE;
 
-        [[maybe_unused]] VkPipelineColorBlendStateCreateInfo colorBlending{};
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.logicOpEnable = VK_FALSE;
         colorBlending.logicOp = VK_LOGIC_OP_COPY;
@@ -971,6 +993,26 @@ private:
 
         if (vkCreatePipelineLayout(m_vkDevice, &pipelineLayoutInfo, nullptr, &m_vkPipelineLayout) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan pipeline layout creation failed", VulkanPipelineCreationFailed });
+        }
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = m_vkPipelineLayout;
+        pipelineInfo.renderPass = m_vkRenderPass;
+        pipelineInfo.subpass = 0;
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+        if (vkCreateGraphicsPipelines(m_vkDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_vkGraphicsPipeline) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan graphics pipeline creation failed", VulkanPipelineCreationFailed });
         }
 
         return {};
@@ -1024,7 +1066,112 @@ private:
         return {};
     }
 
+    core::expected<Error> createFramebuffers() {
+        m_vkSwapChainFrameBuffers = core::arr<VkFramebuffer> (m_vkSwapChainImageViews.len());
+
+        for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
+            VkImageView attachments[] = {
+                m_vkSwapChainImageViews[i]
+            };
+
+            VkFramebufferCreateInfo framebufferInfo{};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = m_vkRenderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = attachments;
+            framebufferInfo.width = m_vkSwapChainExtent.width;
+            framebufferInfo.height = m_vkSwapChainExtent.height;
+            framebufferInfo.layers = 1;
+
+            if (vkCreateFramebuffer(m_vkDevice, &framebufferInfo, nullptr, &m_vkSwapChainFrameBuffers[i]) != VK_SUCCESS) {
+                return core::unexpected<Error>({ "Vulkan framebuffer creation failed", VulkanFramebufferCreationFailed });
+            }
+        }
+
+        return {};
+    }
+
+    core::expected<Error> createCommandPool() {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(m_vkPhysicalDevice, m_vkSurface);
+
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        poolInfo.queueFamilyIndex = u32(queueFamilyIndices.graphicsFamily);
+
+        if (vkCreateCommandPool(m_vkDevice, &poolInfo, nullptr, &m_vkCommandPool) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan command pool creation failed", VulkanCommandPoolCreationFailed });
+        }
+
+        return {};
+    }
+
+    core::expected<Error> createCommandBuffer() {
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = m_vkCommandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(m_vkDevice, &allocInfo, &m_vkCommandBuffer) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan command buffer creation failed", VulkanCommandBufferCreationFailed });
+        }
+
+        return {};
+    }
+
 #pragma endregion
+
+    core::expected<Error> recordCommandBuffer(VkCommandBuffer commandBuffer, u32 idx) {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = 0;
+        beginInfo.pInheritanceInfo = nullptr;
+
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan command buffer recording failed", VulkanBeginCommandBufferFailed });
+        }
+
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = m_vkRenderPass;
+        renderPassInfo.framebuffer = m_vkSwapChainFrameBuffers[idx];
+        renderPassInfo.renderArea.offset = { 0, 0 };
+        renderPassInfo.renderArea.extent = m_vkSwapChainExtent;
+
+        VkClearValue clearColor{};
+        clearColor.color = { 0.0f, 0.0f, 0.0f, 1.0f };
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+
+        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vkGraphicsPipeline);
+
+            VkViewport viewport{};
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = f32(m_vkSwapChainExtent.width);
+            viewport.height = f32(m_vkSwapChainExtent.height);
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+            VkRect2D scissor{};
+            scissor.offset = { 0, 0 };
+            scissor.extent = m_vkSwapChainExtent;
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(commandBuffer);
+
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan command buffer recording failed", VulkanEndCommandBufferFailed });
+        }
+
+        return {};
+    }
 
     void mainLoop() {
         fmt::print("Starting Main loop\n");
@@ -1041,6 +1188,11 @@ private:
             wrap_vkDestroyDebugUtilsMessengerEXT(m_vkInstance, m_vkDebugMessenger, nullptr);
         #endif
 
+        vkDestroyCommandPool(m_vkDevice, m_vkCommandPool, nullptr);
+        for (addr_size i = 0; i < m_vkSwapChainFrameBuffers.len(); i++) {
+            vkDestroyFramebuffer(m_vkDevice, m_vkSwapChainFrameBuffers[i], nullptr);
+        }
+        vkDestroyPipeline(m_vkDevice, m_vkGraphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_vkDevice, m_vkPipelineLayout, nullptr);
         vkDestroyRenderPass(m_vkDevice, m_vkRenderPass, nullptr);
         for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
@@ -1050,6 +1202,7 @@ private:
         vkDestroyDevice(m_vkDevice, nullptr);
         vkDestroySurfaceKHR(m_vkInstance, m_vkSurface, nullptr);
         vkDestroyInstance(m_vkInstance, nullptr);
+
         glfwDestroyWindow(m_glfwWindow);
         glfwTerminate();
     }
@@ -1080,7 +1233,10 @@ private:
     VkFormat m_vkChainImageFormat = VK_FORMAT_UNDEFINED;
     VkPipelineLayout m_vkPipelineLayout = VK_NULL_HANDLE;
     VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_vkGraphicsPipeline = VK_NULL_HANDLE;
+    VkPipeline m_vkGraphicsPipeline = VK_NULL_HANDLE;
+    core::arr<VkFramebuffer> m_vkSwapChainFrameBuffers;
+    VkCommandPool m_vkCommandPool;
+    VkCommandBuffer m_vkCommandBuffer;
 };
 
 i32 main() {
