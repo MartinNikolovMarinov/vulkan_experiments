@@ -7,6 +7,7 @@ enum ErrorType : i32 {
 
     GLFWInitFailed,
     GLFWWindowCreationFailed,
+    GLFWSetEventHandlerCallbackFailed,
 
     VulkanInstanceCreationFailed,
     VulkanListExtensionsFailed,
@@ -42,6 +43,7 @@ const char* errorTypeToCptr(ErrorType t) {
 
         case GLFWInitFailed:                           return "GLFWInitFailed";
         case GLFWWindowCreationFailed:                 return "GLFWWindowCreationFailed";
+        case GLFWSetEventHandlerCallbackFailed:        return "GLFWSetEventHandlerCallbackFailed";
 
         case VulkanInstanceCreationFailed:             return "VulkanInstanceCreationFailed";
         case VulkanListExtensionsFailed:               return "VulkanListExtensionsFailed";
@@ -190,7 +192,7 @@ VkDebugUtilsMessengerCreateInfoEXT createDebugMessengerInfo() {
     return createInfo;
 }
 
-static VkResult wrap_vkCreateDebugUtilsMessengerEXT(
+VkResult wrap_vkCreateDebugUtilsMessengerEXT(
     VkInstance instance,
     const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
     const VkAllocationCallbacks* pAllocator,
@@ -208,7 +210,7 @@ static VkResult wrap_vkCreateDebugUtilsMessengerEXT(
     return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
 }
 
-static void wrap_vkDestroyDebugUtilsMessengerEXT(
+void wrap_vkDestroyDebugUtilsMessengerEXT(
     VkInstance instance,
     VkDebugUtilsMessengerEXT debugMessenger,
     const VkAllocationCallbacks* pAllocator
@@ -234,7 +236,7 @@ struct QueueFamilyIndices {
     }
 };
 
-static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface) {
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface) {
     QueueFamilyIndices indices;
 
     // Get the number of queue families:
@@ -405,6 +407,7 @@ struct Application {
     }
 
 private:
+
     core::expected<Error> initWindow() {
         fmt::print("GLFW window initialization\n");
 
@@ -412,20 +415,31 @@ private:
             return core::unexpected<Error>({ "GLFW initialization failed", GLFWInitFailed });
         }
 
-        // Set glfw error callback:
-        glfwSetErrorCallback([](i32 error, const char* description) {
-            fmt::print(stderr, "GLFW error: {} - {}\n", error, description);
-        });
-
         // Hint to GLFW that we don't want to use OpenGL:
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        // Disable window resizing:
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
         // Create the GLFW window:
         m_glfwWindow = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
         if (!m_glfwWindow) {
             return core::unexpected<Error>({ "GLFW window creation failed", GLFWWindowCreationFailed });
+        }
+
+        glfwSetWindowUserPointer(m_glfwWindow, this);
+
+        // Set event handler callbacks:
+
+        const char* errDesc = nullptr;
+
+        glfwSetErrorCallback([](i32 error, const char* description) {
+            fmt::print(stderr, "GLFW error: {} - {}\n", error, description);
+        });
+        if (i32 errCode = glfwGetError(&errDesc); errCode != GLFW_NO_ERROR) {
+            Error err;
+            err.type = GLFWSetEventHandlerCallbackFailed;
+            err.description = "Failed to set GLFW ErrorCallback, reason: ";
+            err.description.append(errDesc ? errDesc : "Unknown");
+            err.description.append("\n");
+            return core::unexpected(core::move(err));
         }
 
         return {};
@@ -1192,6 +1206,46 @@ private:
         return {};
     }
 
+    core::expected<Error> recreateSwapChain() {
+        fmt::println("Recreating swapchain");
+
+        glfwGetFramebufferSize(m_glfwWindow, &m_width, &m_height);
+        while (m_width == 0 || m_height == 0) {
+            glfwGetFramebufferSize(m_glfwWindow, &m_width, &m_height);
+            glfwWaitEvents();
+        }
+
+        vkDeviceWaitIdle(m_vkDevice);
+
+        cleanupSwapChain();
+
+        if (auto res = createSwapChain(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createImageViews(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createFramebuffers(); res.has_err()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        return {};
+    }
+
+    void cleanupSwapChain() {
+        for (addr_size i = 0; i < m_vkSwapChainFrameBuffers.len(); i++) {
+            vkDestroyFramebuffer(m_vkDevice, m_vkSwapChainFrameBuffers[i], nullptr);
+        }
+
+        for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
+            vkDestroyImageView(m_vkDevice, m_vkSwapChainImageViews[i], nullptr);
+        }
+
+        vkDestroySwapchainKHR(m_vkDevice, m_vkSwapChain, nullptr);
+    }
+
 #pragma endregion
 
     core::expected<Error> recordCommandBuffer(VkCommandBuffer commandBuffer, u32 idx) {
@@ -1260,26 +1314,39 @@ private:
         // 1. Wait for the previous frame to finish
 
         if (auto res = vkWaitForFences(m_vkDevice, 1, &m_vkInFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX); res != VK_SUCCESS) {
-            // TODO: Error handling.
-        }
-        if (auto res = vkResetFences(m_vkDevice, 1, &m_vkInFlightFences[m_currentFrame]); res != VK_SUCCESS) {
-            // TODO: Error handling.
+            Panic("Failed to wait for fence.");
         }
 
         // 2. Acquire an image from the swapchain
 
         u32 imageIndex;
         if (auto res = vkAcquireNextImageKHR(m_vkDevice, m_vkSwapChain, UINT64_MAX, m_vkImageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &imageIndex); res != VK_SUCCESS) {
-            // TODO: Error handling.
+            if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+                if (auto res = recreateSwapChain(); res.has_err()) {
+                    Panic("Failed to recreate swapchain.");
+                }
+                return;
+            }
+            else if (res == VK_SUBOPTIMAL_KHR) {
+                // TODO: Might want to re-create the swapchain in this case.
+                fmt::print("[WARN] Swapchain is suboptimal.\n");
+            }
+            else {
+                Panic("Failed to acquire swapchain image.");
+            }
+        }
+
+        if (auto res = vkResetFences(m_vkDevice, 1, &m_vkInFlightFences[m_currentFrame]); res != VK_SUCCESS) {
+            Panic("Failed to reset fence.");
         }
 
         // 3. Record a command buffer which draws the scene onto the image
 
         if (auto res = vkResetCommandBuffer(m_vkCommandBuffers[m_currentFrame], 0); res != VK_SUCCESS) {
-            // TODO: Error handling.
+            Panic("Failed to reset command buffer.");
         }
         if (auto res = recordCommandBuffer(m_vkCommandBuffers[m_currentFrame], imageIndex); res.has_err()) {
-            // TODO: Error handling.
+            Panic("Failed to record command buffer.");
         }
 
         // 4. Submit the recorded command buffer
@@ -1300,7 +1367,7 @@ private:
         submitInfo.pSignalSemaphores = signalSemaphores;
 
         if (auto res = vkQueueSubmit(m_vkGraphicsQueue, 1, &submitInfo, m_vkInFlightFences[m_currentFrame]); res != VK_SUCCESS) {
-            // TODO: Error handling.
+            Panic("Failed to submit draw command buffer.");
         }
 
         // 5. Present the swapchain image
@@ -1316,8 +1383,16 @@ private:
         presentInfo.pImageIndices = &imageIndex;
         presentInfo.pResults = nullptr;
 
-        if (auto res = vkQueuePresentKHR(m_vkPresetQueue, &presentInfo); res != VK_SUCCESS) {
-            // TODO: Error handling.
+        {
+            auto res = vkQueuePresentKHR(m_vkPresetQueue, &presentInfo);
+            if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
+                if (auto res = recreateSwapChain(); res.has_err()) {
+                    Panic("Failed to recreate swapchain.");
+                }
+            }
+            else if (res != VK_SUCCESS) {
+                Panic("Failed to present swapchain image.");
+            }
         }
 
         m_currentFrame = (m_currentFrame + 1) & (MAX_FRAMES_IN_FLIGHT - 1);
@@ -1325,6 +1400,13 @@ private:
 
     void cleanup() {
         fmt::print("Running cleaning up code\n");
+
+        cleanupSwapChain();
+
+        vkDestroyPipeline(m_vkDevice, m_vkGraphicsPipeline, nullptr);
+        vkDestroyPipelineLayout(m_vkDevice, m_vkPipelineLayout, nullptr);
+
+        vkDestroyRenderPass(m_vkDevice, m_vkRenderPass, nullptr);
 
         for (addr_size i = 0; i < m_vkRenderFinishedSemaphores.len(); i++) {
             vkDestroySemaphore(m_vkDevice, m_vkRenderFinishedSemaphores[i], nullptr);
@@ -1338,19 +1420,6 @@ private:
 
         vkDestroyCommandPool(m_vkDevice, m_vkCommandPool, nullptr);
 
-        for (addr_size i = 0; i < m_vkSwapChainFrameBuffers.len(); i++) {
-            vkDestroyFramebuffer(m_vkDevice, m_vkSwapChainFrameBuffers[i], nullptr);
-        }
-
-        vkDestroyPipeline(m_vkDevice, m_vkGraphicsPipeline, nullptr);
-        vkDestroyPipelineLayout(m_vkDevice, m_vkPipelineLayout, nullptr);
-        vkDestroyRenderPass(m_vkDevice, m_vkRenderPass, nullptr);
-
-        for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
-            vkDestroyImageView(m_vkDevice, m_vkSwapChainImageViews[i], nullptr);
-        }
-
-        vkDestroySwapchainKHR(m_vkDevice, m_vkSwapChain, nullptr);
         vkDestroyDevice(m_vkDevice, nullptr);
 
         #if USE_VALIDATORS
