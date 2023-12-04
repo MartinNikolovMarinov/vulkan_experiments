@@ -31,6 +31,10 @@ enum ErrorType : i32 {
     VulkanEndCommandBufferFailed,
     VulkanSemaphoreCreationFailed,
     VulkanFenceCreationFailed,
+    VulkanVertexBufferCreationFailed,
+    VulkanFailedToFindMemoryType,
+    VulkanVertexBufferMemoryAllocationFailed,
+    VulkanVertexBufferMemoryBindingFailed,
 
     FailedToLoadShader,
 
@@ -67,6 +71,10 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanEndCommandBufferFailed:             return "VulkanEndCommandBufferFailed";
         case VulkanSemaphoreCreationFailed:            return "VulkanSemaphoreCreationFailed";
         case VulkanFenceCreationFailed:                return "VulkanFenceCreationFailed";
+        case VulkanVertexBufferCreationFailed:         return "VulkanVertexBufferCreationFailed";
+        case VulkanFailedToFindMemoryType:             return "VulkanFailedToFindMemoryType";
+        case VulkanVertexBufferMemoryAllocationFailed: return "VulkanVertexBufferMemoryAllocationFailed";
+        case VulkanVertexBufferMemoryBindingFailed:    return "VulkanVertexBufferMemoryBindingFailed";
 
         case FailedToLoadShader:                       return "FailedToLoadShader";
 
@@ -75,6 +83,35 @@ const char* errorTypeToCptr(ErrorType t) {
 
     return "Unknown";
 }
+
+struct Vertex {
+    core::vec2f pos;
+    core::vec3f color;
+
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        return bindingDescription;
+    }
+
+    static core::SArr<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        core::SArr<VkVertexInputAttributeDescription, 2> attributeDescriptions (2);
+
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; // vec2
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT; // vec3
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+};
 
 struct Error {
     Sb description = {};
@@ -363,6 +400,19 @@ VkExtent2D chooseSwapExtent(GLFWwindow* glfwWindow , const VkSurfaceCapabilities
     return actualExtent;
 }
 
+core::expected<u32, Error> findMemoryType(VkPhysicalDevice pdevice, u32 typeFilter, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(pdevice, &memProperties);
+
+    for (u32 i = 0; i < memProperties.memoryTypeCount; i++) {
+        if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    return core::unexpected<Error>({ "Vulkan memory type not found", VulkanFailedToFindMemoryType });
+}
+
 struct Application {
 
 #ifndef NDEBUG
@@ -450,6 +500,10 @@ private:
     core::expected<Error> initVulkan() {
         fmt::print("Vulkan initialization\n");
 
+        m_vertices.append({ core::v(0.0f, -0.5f), core::v(1.0f, 0.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, 0.5f), core::v(0.0f, 1.0f, 0.0f) });
+        m_vertices.append({ core::v(-0.5f, 0.5f), core::v(0.0f, 0.0f, 1.0f) });
+
         if (auto res = createInstance(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
@@ -493,6 +547,10 @@ private:
         }
 
         if (auto res = createCommandPool(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createVertexBuffer(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -887,7 +945,7 @@ private:
     core::expected<Error> createGraphicsPipeline() {
         fmt::print("Creating graphics pipeline\n");
 
-        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/01_hardcoded_triangle.vert.spv";
+        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/02_triangle_with_vertex_buffer.vert.spv";
 
         fmt::print("  [STEP 1] Load vertex shader code\n");
         core::Arr<u8> vertShaderCode;
@@ -908,7 +966,7 @@ private:
             }
         }
 
-        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/01_hardcoded_triangle.frag.spv";
+        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/02_triangle_with_vertex_buffer.frag.spv";
 
         fmt::print("  [STEP 2] Load fragment shader code\n");
         core::Arr<u8> fragShaderCode;
@@ -975,12 +1033,14 @@ private:
         dynamicState.dynamicStateCount = DYNAMIC_STATES_COUNT;
         dynamicState.pDynamicStates = dynamicStates;
 
+        VkVertexInputBindingDescription bindingDescription = Vertex::getBindingDescription();
+        core::SArr<VkVertexInputAttributeDescription, 2> attributeDescriptions = Vertex::getAttributeDescriptions();
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = u32(attributeDescriptions.len());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1168,6 +1228,50 @@ private:
         return {};
     }
 
+    core::expected<Error> createVertexBuffer() {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(Vertex) * m_vertices.len();
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(m_vkDevice, &bufferInfo, nullptr, &m_vkVertexBuffer) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan vertex buffer creation failed", VulkanVertexBufferCreationFailed });
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(m_vkDevice, m_vkVertexBuffer, &memRequirements);
+
+        VkMemoryPropertyFlags mpf = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                    VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+
+        auto mTypeRes = findMemoryType(m_vkPhysicalDevice, memRequirements.memoryTypeBits, mpf);
+        if (mTypeRes.hasErr()) {
+            return core::unexpected<Error>(core::move(mTypeRes.err()));
+        }
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = core::move(mTypeRes.value());
+
+        if (vkAllocateMemory(m_vkDevice, &allocInfo, nullptr, &m_vkVertexBufferMemory) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan vertex buffer memory allocation failed", VulkanVertexBufferMemoryAllocationFailed });
+        }
+
+        if (vkBindBufferMemory(m_vkDevice, m_vkVertexBuffer, m_vkVertexBufferMemory, 0) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan vertex buffer memory binding failed", VulkanVertexBufferMemoryBindingFailed });
+        }
+
+        void* data;
+        vkMapMemory(m_vkDevice, m_vkVertexBufferMemory, 0, bufferInfo.size, 0, &data);
+            core::memcopy(data, m_vertices.data(), addr_size(bufferInfo.size));
+        vkUnmapMemory(m_vkDevice, m_vkVertexBufferMemory);
+
+        return {};
+    }
+
     core::expected<Error> createCommandBuffers() {
         fmt::print("Creating command buffers\n");
 
@@ -1297,7 +1401,11 @@ private:
             scissor.extent = m_vkSwapChainExtent;
             vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            VkBuffer vertexBuffers[] = { m_vkVertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+            vkCmdDraw(commandBuffer, u32(m_vertices.len()), 1, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -1412,6 +1520,9 @@ private:
 
         cleanupSwapChain();
 
+        vkDestroyBuffer(m_vkDevice, m_vkVertexBuffer, nullptr);
+        vkFreeMemory(m_vkDevice, m_vkVertexBufferMemory, nullptr);
+
         vkDestroyPipeline(m_vkDevice, m_vkGraphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_vkDevice, m_vkPipelineLayout, nullptr);
 
@@ -1476,10 +1587,12 @@ private:
     core::Arr<VkSemaphore> m_vkRenderFinishedSemaphores;
     core::Arr<VkFence> m_vkInFlightFences;
     u64 m_currentFrame = 0;
+    core::Arr<Vertex> m_vertices;
+    VkBuffer m_vkVertexBuffer;
+    VkDeviceMemory m_vkVertexBufferMemory;
 };
 
-// NEXT: Start from here -> https://vulkan-tutorial.com/Drawing_a_triangle/Swap_chain_recreation
-// After that go back and re-read the previous chapters.
+// NEXT: Start from here -> https://vulkan-tutorial.com/Vertex_buffers/Staging_buffer
 
 i32 main() {
     constexpr const char* APP_TITLE = "Vulkan Example App";

@@ -24,7 +24,24 @@ target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror -Wno-unknow
 
 # Add compiler definitions:
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    -DASSETS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/"
+    -DASSETS_PATH="${CMAKE_CURRENT_BINARY_DIR}/assets/"
+)
+
+# Post build script to build shaders:
+
+# Copy assets tp build directory:
+add_custom_command(TARGET ${PROJECT_NAME}
+    POST_BUILD COMMAND
+    ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/assets
+    ${CMAKE_CURRENT_BINARY_DIR}/assets)
+
+# Compile shaders:
+add_custom_command(
+    TARGET ${PROJECT_NAME}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders
+    POST_BUILD COMMAND /bin/bash
+    ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders/compile_shaders.sh
 )
 
 # Core library:
