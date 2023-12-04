@@ -5,30 +5,12 @@
 // core or std core, it must include this file instead of directly including them.
 // This is because defining default macros can be done only here.
 
-#include <std/allocators/alloc_std_stats.h>
-
-using namespace coretypes;
-
-// Define the default allocator to be used by core:
-
-static core::std_stats_allocator g_stdAlloc;
-struct std_allocator_static {
-    static void* alloc(addr_size size) noexcept;
-
-    static void* calloc(addr_size count, addr_size size) noexcept;
-
-    static void free(void* ptr) noexcept;
-
-    static addr_size used_mem() noexcept;
-
-    static const char* allocator_name() noexcept;
-};
-
 #undef CORE_DEFAULT_ALLOCATOR
-#define CORE_DEFAULT_ALLOCATOR() std_allocator_static
+#define CORE_DEFAULT_ALLOCATOR() core::StdAllocator
 
 #include <core.h>
-#include <std/core.h>
+
+using namespace coretypes;
 
 #include <fmt/core.h>
 #include <fmt/color.h>
@@ -45,4 +27,13 @@ struct std_allocator_static {
 
 void initCore();
 
-using sb = core::str_builder<>;
+using Sb = core::StrBuilder<>;
+
+template<> addr_size core::hash(const core::StrView& key);
+template<> addr_size core::hash(const i32& key);
+template<> addr_size core::hash(const u32& key);
+
+template<> bool core::eq(const core::StrView& a, const core::StrView& b);
+template<> bool core::eq(const i32& a, const i32& b);
+template<> bool core::eq(const u32& a, const u32& b);
+

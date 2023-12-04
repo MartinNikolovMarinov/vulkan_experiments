@@ -77,17 +77,17 @@ const char* errorTypeToCptr(ErrorType t) {
 }
 
 struct Error {
-    sb description = {};
+    Sb description = {};
     ErrorType type = None;
 };
 
-core::expected<core::arr<VkExtensionProperties>, Error> getAllSupportedVkExtensions() {
+core::expected<core::Arr<VkExtensionProperties>, Error> getAllSupportedVkExtensions() {
     u32 extCount = 0;
     if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr) != VK_SUCCESS) {
         return core::unexpected<Error>({ "Vulkan instance extension enumeration failed", VulkanListExtensionsFailed });
     }
 
-    core::arr<VkExtensionProperties> exts (extCount);
+    core::Arr<VkExtensionProperties> exts (extCount);
     if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, exts.data()) != VK_SUCCESS) {
         return core::unexpected<Error>({ "Vulkan instance extension enumeration failed", VulkanListExtensionsFailed });
     }
@@ -95,13 +95,13 @@ core::expected<core::arr<VkExtensionProperties>, Error> getAllSupportedVkExtensi
     return exts;
 }
 
-core::expected<core::arr<VkLayerProperties>, Error> getAllSupportedVkValidationLayers() {
+core::expected<core::Arr<VkLayerProperties>, Error> getAllSupportedVkValidationLayers() {
     u32 layerCount = 0;
     if (vkEnumerateInstanceLayerProperties(&layerCount, nullptr) != VK_SUCCESS) {
         return core::unexpected<Error>({ "Vulkan instance layer enumeration failed", VulkanListValidationLayersFailed });
     }
 
-    core::arr<VkLayerProperties> layers (layerCount);
+    core::Arr<VkLayerProperties> layers (layerCount);
     if (vkEnumerateInstanceLayerProperties(&layerCount, layers.data()) != VK_SUCCESS) {
         return core::unexpected<Error>({ "Vulkan instance layer enumeration failed", VulkanListValidationLayersFailed });
     }
@@ -109,13 +109,13 @@ core::expected<core::arr<VkLayerProperties>, Error> getAllSupportedVkValidationL
     return layers;
 }
 
-core::expected<core::arr<VkExtensionProperties>, Error> getAllSupportedVkDeviceExtensions(VkPhysicalDevice device) {
+core::expected<core::Arr<VkExtensionProperties>, Error> getAllSupportedVkDeviceExtensions(VkPhysicalDevice device) {
     u32 extCount = 0;
     if (vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount, nullptr) != VK_SUCCESS) {
         return core::unexpected<Error>({ "Vulkan device extension enumeration failed", VulkanListDeviceExtensionsFailed });
     }
 
-    core::arr<VkExtensionProperties> exts (extCount);
+    core::Arr<VkExtensionProperties> exts (extCount);
     if (vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount, exts.data()) != VK_SUCCESS) {
         return core::unexpected<Error>({ "Vulkan device extension enumeration failed", VulkanListDeviceExtensionsFailed });
     }
@@ -124,16 +124,16 @@ core::expected<core::arr<VkExtensionProperties>, Error> getAllSupportedVkDeviceE
 }
 
 bool checkExtensionSupport(
-    const core::arr<const char*>& extensions,
-    const core::arr<VkExtensionProperties>& supported
+    const core::Arr<const char*>& extensions,
+    const core::Arr<VkExtensionProperties>& supported
 ) {
     for (addr_size i = 0; i < extensions.len(); i++) {
         const char* ext = extensions[i];
-        addr_size extLen = core::cptr_len(ext);
+        addr_size extLen = core::cptrLen(ext);
         bool found = false;
         for (addr_size j = 0; j < supported.len(); j++) {
             const char* sup = supported[j].extensionName;
-            if (core::cptr_eq(ext, sup, extLen)) {
+            if (core::cptrEq(ext, sup, extLen)) {
                 found = true;
                 break;
             }
@@ -147,16 +147,16 @@ bool checkExtensionSupport(
 }
 
 bool checkValidationLayerSupport(
-    const core::arr<const char*>& validationLayers,
-    const core::arr<VkLayerProperties>& supported
+    const core::Arr<const char*>& validationLayers,
+    const core::Arr<VkLayerProperties>& supported
 ) {
     for (addr_size i = 0; i < validationLayers.len(); i++) {
         const char* vlayer = validationLayers[i];
-        addr_size vlen = core::cptr_len(vlayer);
+        addr_size vlen = core::cptrLen(vlayer);
         bool found = false;
         for (addr_size j = 0; j < supported.len(); j++) {
             const char* sup = supported[j].layerName;
-            if (core::cptr_eq(vlayer, sup, vlen)) {
+            if (core::cptrEq(vlayer, sup, vlen)) {
                 found = true;
                 break;
             }
@@ -244,7 +244,7 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surfa
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
 
     // Get the queue families:
-    core::arr<VkQueueFamilyProperties> queueFamilies (queueFamilyCount);
+    core::Arr<VkQueueFamilyProperties> queueFamilies (queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
     // Iterate over the queue families and find the ones that support graphics and presentation:
@@ -273,8 +273,8 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surfa
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
-    core::arr<VkSurfaceFormatKHR> formats;
-    core::arr<VkPresentModeKHR> presentModes;
+    core::Arr<VkSurfaceFormatKHR> formats;
+    core::Arr<VkPresentModeKHR> presentModes;
 };
 
 core::expected<SwapChainSupportDetails, Error> querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
@@ -291,7 +291,7 @@ core::expected<SwapChainSupportDetails, Error> querySwapChainSupport(VkPhysicalD
     }
 
     if (formatCount != 0) {
-        details.formats = core::arr<VkSurfaceFormatKHR> (formatCount);
+        details.formats = core::Arr<VkSurfaceFormatKHR> (formatCount);
         if (vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data()) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan surface formats query failed", VulkanSwapChainSupportQueryFailed });
         }
@@ -303,7 +303,7 @@ core::expected<SwapChainSupportDetails, Error> querySwapChainSupport(VkPhysicalD
     }
 
     if (presentModeCount != 0) {
-        details.presentModes = core::arr<VkPresentModeKHR> (presentModeCount);
+        details.presentModes = core::Arr<VkPresentModeKHR> (presentModeCount);
         if (vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data()) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan surface present modes query failed", VulkanSwapChainSupportQueryFailed });
         }
@@ -312,7 +312,7 @@ core::expected<SwapChainSupportDetails, Error> querySwapChainSupport(VkPhysicalD
     return details;
 }
 
-VkSurfaceFormatKHR chooseSwapSurfaceFormat(const core::arr<VkSurfaceFormatKHR>& availableFormats) {
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const core::Arr<VkSurfaceFormatKHR>& availableFormats) {
     for (addr_size i = 0; i < availableFormats.len(); i++) {
         VkSurfaceFormatKHR format = availableFormats[i];
         if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
@@ -328,7 +328,7 @@ VkSurfaceFormatKHR chooseSwapSurfaceFormat(const core::arr<VkSurfaceFormatKHR>& 
     return {};
 }
 
-VkPresentModeKHR chooseSwapPresentMode(const core::arr<VkPresentModeKHR>& availablePresentModes) {
+VkPresentModeKHR chooseSwapPresentMode(const core::Arr<VkPresentModeKHR>& availablePresentModes) {
     for (addr_size i = 0; i < availablePresentModes.len(); i++) {
         VkPresentModeKHR mode = availablePresentModes[i];
         if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -382,11 +382,11 @@ struct Application {
     core::expected<Error> run() {
         initCore();
 
-        if (auto ret = initWindow(); ret.has_err()) {
+        if (auto ret = initWindow(); ret.hasErr()) {
             return core::unexpected<Error>(core::move(ret.err()));
         }
 
-        if (auto ret = initVulkan(); ret.has_err()) {
+        if (auto ret = initVulkan(); ret.hasErr()) {
             return core::unexpected<Error>(core::move(ret.err()));
         }
 
@@ -450,57 +450,57 @@ private:
     core::expected<Error> initVulkan() {
         fmt::print("Vulkan initialization\n");
 
-        if (auto res = createInstance(); res.has_err()) {
+        if (auto res = createInstance(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
         #if USE_VALIDATORS
-            if (auto res = createDebugMessenger(); res.has_err()) {
+            if (auto res = createDebugMessenger(); res.hasErr()) {
                 return core::unexpected<Error>(core::move(res.err()));
             }
         #endif
 
-        if (auto res = createSurface(); res.has_err()) {
+        if (auto res = createSurface(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = pickPhysicalDevice(); res.has_err()) {
+        if (auto res = pickPhysicalDevice(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createLogicalDevice(); res.has_err()) {
+        if (auto res = createLogicalDevice(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createSwapChain(); res.has_err()) {
+        if (auto res = createSwapChain(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createImageViews(); res.has_err()) {
+        if (auto res = createImageViews(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createRenderPass(); res.has_err()) {
+        if (auto res = createRenderPass(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createGraphicsPipeline(); res.has_err()) {
+        if (auto res = createGraphicsPipeline(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createFramebuffers(); res.has_err()) {
+        if (auto res = createFramebuffers(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createCommandPool(); res.has_err()) {
+        if (auto res = createCommandPool(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createCommandBuffers(); res.has_err()) {
+        if (auto res = createCommandBuffers(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createSyncObjects(); res.has_err()) {
+        if (auto res = createSyncObjects(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -535,7 +535,7 @@ private:
             // Get all supported Vulkan extensions:
             {
                 auto res = getAllSupportedVkExtensions();
-                if (res.has_err()) {
+                if (res.hasErr()) {
                     return core::unexpected<Error>(core::move(res.err()));
                 }
                 m_vkSupportedExtensions = core::move(res.value());
@@ -578,7 +578,7 @@ private:
             // Get all supported Vulkan validation layers:
             {
                 auto res = getAllSupportedVkValidationLayers();
-                if (res.has_err()) {
+                if (res.hasErr()) {
                     return core::unexpected<Error>(core::move(res.err()));
                 }
                 m_vkSupportedValidationLayers = core::move(res.value());
@@ -637,7 +637,7 @@ private:
         }
 
         // Enumberate the physical devices and store info about them:
-        core::arr<VkPhysicalDevice> phyDevices (deviceCount);
+        core::Arr<VkPhysicalDevice> phyDevices (deviceCount);
         vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, phyDevices.data());
 
         // Append the required device extensions:
@@ -647,7 +647,7 @@ private:
         for (addr_size i = 0; i < phyDevices.len(); i++) {
             VkPhysicalDevice device = phyDevices[i];
             auto res = isDeviceSutable(device, m_vkSurface);
-            if (res.has_err()) return core::unexpected<Error>(core::move(res.err()));
+            if (res.hasErr()) return core::unexpected<Error>(core::move(res.err()));
             if (res.value() == true) {
                 m_vkPhysicalDevice = device;
                 break;
@@ -665,7 +665,7 @@ private:
     core::expected<bool, Error> isDeviceSutable(VkPhysicalDevice device, VkSurfaceKHR surface) {
         // Get all supported extensions for the device:
         auto supportedDeviceExt = getAllSupportedVkDeviceExtensions(device);
-        if (supportedDeviceExt.has_err()) {
+        if (supportedDeviceExt.hasErr()) {
             return core::unexpected<Error>(core::move(supportedDeviceExt.err()));
         }
 
@@ -677,7 +677,7 @@ private:
         // Check if the swapchain is adaquite:
         {
             auto res = querySwapChainSupport(device, surface);
-            if (res.has_err()) {
+            if (res.hasErr()) {
                 return core::unexpected<Error>(core::move(res.err()));
             }
             SwapChainSupportDetails swapChainSupport = core::move(res.value());
@@ -705,8 +705,8 @@ private:
             return core::unexpected<Error>({ "Vulkan queue family indices not complete", VulkanDeviceCreationFailed });
         }
 
-        core::arr<VkDeviceQueueCreateInfo> queueCreateInfos;
-        core::hash_set<u32> uniqueQueueFamilies;
+        core::Arr<VkDeviceQueueCreateInfo> queueCreateInfos;
+        core::HashSet<u32> uniqueQueueFamilies;
         {
             auto lval = u32(queueIndices.graphicsFamily);
             uniqueQueueFamilies.put(lval);
@@ -724,6 +724,7 @@ private:
             queueCreateInfo.queueCount = 1;
             queueCreateInfo.pQueuePriorities = &queuePriority;
             queueCreateInfos.append(core::move(queueCreateInfo));
+            return true;
         });
 
         // [STEP 2] Specify used device features.
@@ -786,7 +787,7 @@ private:
         SwapChainSupportDetails swapChainSupport;
         {
             auto ret = querySwapChainSupport(m_vkPhysicalDevice, m_vkSurface);
-            if (ret.has_err()) {
+            if (ret.hasErr()) {
                 return core::unexpected<Error>(core::move(ret.err()));
             }
             swapChainSupport = core::move(ret.value());
@@ -844,7 +845,7 @@ private:
         }
 
         vkGetSwapchainImagesKHR(m_vkDevice, m_vkSwapChain, &imageCount, nullptr);
-        m_vkSwapChainImages = core::arr<VkImage> (imageCount);
+        m_vkSwapChainImages = core::Arr<VkImage> (imageCount);
         vkGetSwapchainImagesKHR(m_vkDevice, m_vkSwapChain, &imageCount, m_vkSwapChainImages.data());
         m_vkSwapChainExtent = extent;
         m_vkChainImageFormat = surfaceFormat.format;
@@ -855,7 +856,7 @@ private:
     core::expected<Error> createImageViews() {
         fmt::print("Creating image views\n");
 
-        m_vkSwapChainImageViews = core::arr<VkImageView> (m_vkSwapChainImages.len());
+        m_vkSwapChainImageViews = core::Arr<VkImageView> (m_vkSwapChainImages.len());
 
         for (addr_size i = 0; i < m_vkSwapChainImages.len(); i++) {
             VkImageViewCreateInfo createInfo{};
@@ -889,16 +890,20 @@ private:
         static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/01_hardcoded_triangle.vert.spv";
 
         fmt::print("  [STEP 1] Load vertex shader code\n");
-        core::arr<u8> vertShaderCode;
+        core::Arr<u8> vertShaderCode;
         {
-            auto res = os_read_entire_file(VERT_SHADER_PATH, vertShaderCode);
-            if (res.has_err()) {
+            auto res = core::fileReadEntire(VERT_SHADER_PATH, vertShaderCode);
+            if (res.hasErr()) {
                 Error err;
                 err.type = FailedToLoadShader;
                 err.description = "Failed to load vertex shader code: ";
                 err.description.append(VERT_SHADER_PATH);
                 err.description.append(", reason: ");
-                err.description.append(core::os_get_err_cptr(res.err()));
+                {
+                    char out[core::MAX_SYSTEM_ERR_MSG_SIZE] = {};
+                    core::pltErrorDescribe(res.err(), out);
+                    err.description.append(out);
+                }
                 return core::unexpected(core::move(err));
             }
         }
@@ -906,16 +911,20 @@ private:
         static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/01_hardcoded_triangle.frag.spv";
 
         fmt::print("  [STEP 2] Load fragment shader code\n");
-        core::arr<u8> fragShaderCode;
+        core::Arr<u8> fragShaderCode;
         {
-            auto res = os_read_entire_file(FRAG_SHADER_PATH, fragShaderCode);
-            if (res.has_err()) {
+            auto res = core::fileReadEntire(FRAG_SHADER_PATH, fragShaderCode);
+            if (res.hasErr()) {
                 Error err;
                 err.type = FailedToLoadShader;
                 err.description = "Failed to load fragment shader code: ";
                 err.description.append(FRAG_SHADER_PATH);
                 err.description.append(", reason: ");
-                err.description.append(core::os_get_err_cptr(res.err()));
+                {
+                    char out[core::MAX_SYSTEM_ERR_MSG_SIZE] = {};
+                    core::pltErrorDescribe(res.err(), out);
+                    err.description.append(out);
+                }
                 return core::unexpected(core::move(err));
             }
         }
@@ -924,7 +933,7 @@ private:
         VkShaderModule vertShaderModule;
         {
             auto ret = createShaderModule(vertShaderCode);
-            if (ret.has_err()) {
+            if (ret.hasErr()) {
                 return core::unexpected<Error>(core::move(ret.err()));
             }
             vertShaderModule = core::move(ret.value());
@@ -934,7 +943,7 @@ private:
         VkShaderModule fragShaderModule;
         {
             auto ret = createShaderModule(fragShaderCode);
-            if (ret.has_err()) {
+            if (ret.hasErr()) {
                 return core::unexpected<Error>(core::move(ret.err()));
             }
             fragShaderModule = core::move(ret.value());
@@ -1055,7 +1064,7 @@ private:
         return {};
     }
 
-    core::expected<VkShaderModule, Error> createShaderModule(const core::arr<u8>& code) {
+    core::expected<VkShaderModule, Error> createShaderModule(const core::Arr<u8>& code) {
         VkShaderModuleCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         createInfo.codeSize = code.len();
@@ -1118,7 +1127,7 @@ private:
     core::expected<Error> createFramebuffers() {
         fmt::print("Creating framebuffers\n");
 
-        m_vkSwapChainFrameBuffers = core::arr<VkFramebuffer> (m_vkSwapChainImageViews.len());
+        m_vkSwapChainFrameBuffers = core::Arr<VkFramebuffer> (m_vkSwapChainImageViews.len());
 
         for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
             VkImageView attachments[] = {
@@ -1162,7 +1171,7 @@ private:
     core::expected<Error> createCommandBuffers() {
         fmt::print("Creating command buffers\n");
 
-        m_vkCommandBuffers = core::arr<VkCommandBuffer> (MAX_FRAMES_IN_FLIGHT);
+        m_vkCommandBuffers = core::Arr<VkCommandBuffer> (MAX_FRAMES_IN_FLIGHT);
 
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1187,9 +1196,9 @@ private:
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Start the fence in the signaled state.
 
-        m_vkImageAvailableSemaphores = core::arr<VkSemaphore> (MAX_FRAMES_IN_FLIGHT);
-        m_vkRenderFinishedSemaphores = core::arr<VkSemaphore> (MAX_FRAMES_IN_FLIGHT);
-        m_vkInFlightFences = core::arr<VkFence> (MAX_FRAMES_IN_FLIGHT);
+        m_vkImageAvailableSemaphores = core::Arr<VkSemaphore> (MAX_FRAMES_IN_FLIGHT);
+        m_vkRenderFinishedSemaphores = core::Arr<VkSemaphore> (MAX_FRAMES_IN_FLIGHT);
+        m_vkInFlightFences = core::Arr<VkFence> (MAX_FRAMES_IN_FLIGHT);
 
         for (addr_size i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             if (vkCreateSemaphore(m_vkDevice, &semaphoreInfo, nullptr, &m_vkImageAvailableSemaphores[i]) != VK_SUCCESS) {
@@ -1219,15 +1228,15 @@ private:
 
         cleanupSwapChain();
 
-        if (auto res = createSwapChain(); res.has_err()) {
+        if (auto res = createSwapChain(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createImageViews(); res.has_err()) {
+        if (auto res = createImageViews(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createFramebuffers(); res.has_err()) {
+        if (auto res = createFramebuffers(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -1322,7 +1331,7 @@ private:
         u32 imageIndex;
         if (auto res = vkAcquireNextImageKHR(m_vkDevice, m_vkSwapChain, UINT64_MAX, m_vkImageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &imageIndex); res != VK_SUCCESS) {
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
-                if (auto res = recreateSwapChain(); res.has_err()) {
+                if (auto res = recreateSwapChain(); res.hasErr()) {
                     Panic("Failed to recreate swapchain.");
                 }
                 return;
@@ -1345,7 +1354,7 @@ private:
         if (auto res = vkResetCommandBuffer(m_vkCommandBuffers[m_currentFrame], 0); res != VK_SUCCESS) {
             Panic("Failed to reset command buffer.");
         }
-        if (auto res = recordCommandBuffer(m_vkCommandBuffers[m_currentFrame], imageIndex); res.has_err()) {
+        if (auto res = recordCommandBuffer(m_vkCommandBuffers[m_currentFrame], imageIndex); res.hasErr()) {
             Panic("Failed to record command buffer.");
         }
 
@@ -1386,7 +1395,7 @@ private:
         {
             auto res = vkQueuePresentKHR(m_vkPresetQueue, &presentInfo);
             if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
-                if (auto res = recreateSwapChain(); res.has_err()) {
+                if (auto res = recreateSwapChain(); res.hasErr()) {
                     Panic("Failed to recreate swapchain.");
                 }
             }
@@ -1441,11 +1450,11 @@ private:
 
     // Vulkan statekeeping:
     VkInstance m_vkInstance = VK_NULL_HANDLE;
-    core::arr<const char*> m_vkActiveExtensions;
-    core::arr<VkExtensionProperties> m_vkSupportedExtensions;
-    core::arr<const char*> m_vkActiveValidationLayers;
-    core::arr<VkLayerProperties> m_vkSupportedValidationLayers;
-    core::arr<const char*> m_vkActiveDeviceExtensions;
+    core::Arr<const char*> m_vkActiveExtensions;
+    core::Arr<VkExtensionProperties> m_vkSupportedExtensions;
+    core::Arr<const char*> m_vkActiveValidationLayers;
+    core::Arr<VkLayerProperties> m_vkSupportedValidationLayers;
+    core::Arr<const char*> m_vkActiveDeviceExtensions;
     VkDebugUtilsMessengerEXT m_vkDebugMessenger = VK_NULL_HANDLE;
     VkPhysicalDevice m_vkPhysicalDevice = VK_NULL_HANDLE;
     VkDevice m_vkDevice = VK_NULL_HANDLE;
@@ -1453,19 +1462,19 @@ private:
     VkSurfaceKHR m_vkSurface = VK_NULL_HANDLE;
     VkQueue m_vkPresetQueue = VK_NULL_HANDLE;
     VkSwapchainKHR m_vkSwapChain = VK_NULL_HANDLE;
-    core::arr<VkImage> m_vkSwapChainImages;
+    core::Arr<VkImage> m_vkSwapChainImages;
     VkExtent2D m_vkSwapChainExtent = {};
-    core::arr<VkImageView> m_vkSwapChainImageViews;
+    core::Arr<VkImageView> m_vkSwapChainImageViews;
     VkFormat m_vkChainImageFormat = VK_FORMAT_UNDEFINED;
     VkPipelineLayout m_vkPipelineLayout = VK_NULL_HANDLE;
     VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
     VkPipeline m_vkGraphicsPipeline = VK_NULL_HANDLE;
-    core::arr<VkFramebuffer> m_vkSwapChainFrameBuffers;
+    core::Arr<VkFramebuffer> m_vkSwapChainFrameBuffers;
     VkCommandPool m_vkCommandPool;
-    core::arr<VkCommandBuffer> m_vkCommandBuffers;
-    core::arr<VkSemaphore> m_vkImageAvailableSemaphores;
-    core::arr<VkSemaphore> m_vkRenderFinishedSemaphores;
-    core::arr<VkFence> m_vkInFlightFences;
+    core::Arr<VkCommandBuffer> m_vkCommandBuffers;
+    core::Arr<VkSemaphore> m_vkImageAvailableSemaphores;
+    core::Arr<VkSemaphore> m_vkRenderFinishedSemaphores;
+    core::Arr<VkFence> m_vkInFlightFences;
     u64 m_currentFrame = 0;
 };
 
@@ -1475,7 +1484,7 @@ private:
 i32 main() {
     constexpr const char* APP_TITLE = "Vulkan Example App";
     Application app = app.create({ 800, 600, APP_TITLE });
-    if (auto res = app.run(); res.has_err()) {
+    if (auto res = app.run(); res.hasErr()) {
         fmt::print(stderr, "Error: {}\n", res.err().description.view().data());
         return EXIT_FAILURE;
     }
