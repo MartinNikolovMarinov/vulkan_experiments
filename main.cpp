@@ -413,6 +413,91 @@ core::expected<u32, Error> findMemoryType(VkPhysicalDevice pdevice, u32 typeFilt
     return core::unexpected<Error>({ "Vulkan memory type not found", VulkanFailedToFindMemoryType });
 }
 
+core::expected<Error> createBuffer(VkPhysicalDevice pdevice, VkDevice device, VkDeviceSize size,
+                                   VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+                                   VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan buffer creation failed", VulkanVertexBufferCreationFailed });
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+    auto memTypeRes = findMemoryType(pdevice, memRequirements.memoryTypeBits, properties);
+    if (memTypeRes.hasErr()) {
+        return core::unexpected<Error>(core::move(memTypeRes.err()));
+    }
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = core::move(memTypeRes.value());
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan buffer memory allocation failed", VulkanVertexBufferMemoryAllocationFailed });
+    }
+
+    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+
+    return {};
+}
+
+core::expected<Error> copyBuffer(VkDevice device, VkCommandPool commandPool, VkQueue graphicsQueue,
+                                 VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer;
+    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan command buffer allocation failed", VulkanCommandBufferCreationFailed });
+    }
+
+    defer {
+        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    };
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan command buffer begin failed", VulkanBeginCommandBufferFailed });
+    }
+
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = 0;
+        copyRegion.size = size;
+        vkCmdCopyBuffer(commandBuffer, src, dst, 1, &copyRegion);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan command buffer end failed", VulkanEndCommandBufferFailed });
+    }
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan queue submit failed", VulkanEndCommandBufferFailed });
+    }
+    if (vkQueueWaitIdle(graphicsQueue) != VK_SUCCESS) {
+        return core::unexpected<Error>({ "Vulkan queue wait idle failed", VulkanEndCommandBufferFailed });
+    }
+
+    return {};
+}
+
 struct Application {
 
 #ifndef NDEBUG
@@ -1229,45 +1314,49 @@ private:
     }
 
     core::expected<Error> createVertexBuffer() {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(Vertex) * m_vertices.len();
-        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkDeviceSize bufferSize = m_vertices.byteLen();
 
-        if (vkCreateBuffer(m_vkDevice, &bufferInfo, nullptr, &m_vkVertexBuffer) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan vertex buffer creation failed", VulkanVertexBufferCreationFailed });
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        {
+            VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            auto res = createBuffer(m_vkPhysicalDevice, m_vkDevice, bufferSize,
+                                    usage, props, stagingBuffer, stagingBufferMemory);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
         }
 
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(m_vkDevice, m_vkVertexBuffer, &memRequirements);
-
-        VkMemoryPropertyFlags mpf = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-                                    VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-
-        auto mTypeRes = findMemoryType(m_vkPhysicalDevice, memRequirements.memoryTypeBits, mpf);
-        if (mTypeRes.hasErr()) {
-            return core::unexpected<Error>(core::move(mTypeRes.err()));
-        }
-
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = core::move(mTypeRes.value());
-
-        if (vkAllocateMemory(m_vkDevice, &allocInfo, nullptr, &m_vkVertexBufferMemory) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan vertex buffer memory allocation failed", VulkanVertexBufferMemoryAllocationFailed });
-        }
-
-        if (vkBindBufferMemory(m_vkDevice, m_vkVertexBuffer, m_vkVertexBufferMemory, 0) != VK_SUCCESS) {
-            return core::unexpected<Error>({ "Vulkan vertex buffer memory binding failed", VulkanVertexBufferMemoryBindingFailed });
-        }
+        defer {
+            vkDestroyBuffer(m_vkDevice, stagingBuffer, nullptr);
+            vkFreeMemory(m_vkDevice, stagingBufferMemory, nullptr);
+        };
 
         void* data;
-        vkMapMemory(m_vkDevice, m_vkVertexBufferMemory, 0, bufferInfo.size, 0, &data);
-            core::memcopy(data, m_vertices.data(), addr_size(bufferInfo.size));
-        vkUnmapMemory(m_vkDevice, m_vkVertexBufferMemory);
+        vkMapMemory(m_vkDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+            core::memcopy(data, m_vertices.data(), bufferSize);
+        vkUnmapMemory(m_vkDevice, stagingBufferMemory);
+
+        {
+            VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+            auto res = createBuffer(m_vkPhysicalDevice, m_vkDevice, bufferSize,
+                                    usage, props, m_vkVertexBuffer, m_vkVertexBufferMemory);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        }
+
+        {
+            auto res = copyBuffer(m_vkDevice, m_vkCommandPool, m_vkGraphicsQueue,
+                                  stagingBuffer, m_vkVertexBuffer, bufferSize);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        }
 
         return {};
     }
