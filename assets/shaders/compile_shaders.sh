@@ -1,6 +1,6 @@
 function check_exit_code() {
     if [ $? -ne 0 ]; then
-        echo "[FAILED]"
+        echo -e "\n\033[0;31m[ERROR]\033[0m - Failed to compile shaders!\n"
         exit 1
     fi
 }
@@ -10,10 +10,10 @@ exec_quiet() {
     check_exit_code
 }
 
-exec_quiet glslc 01_hardcoded_triangle.frag -o 01_hardcoded_triangle.frag.spv
-exec_quiet glslc 01_hardcoded_triangle.vert -o 01_hardcoded_triangle.vert.spv
+exec_quiet glslc 01_hardcoded.frag -o 01_hardcoded.frag.spv
+exec_quiet glslc 01_hardcoded.vert -o 01_hardcoded.vert.spv
 
-exec_quiet glslc 02_triangle_with_vertex_buffer.frag -o 02_triangle_with_vertex_buffer.frag.spv
-exec_quiet glslc 02_triangle_with_vertex_buffer.vert -o 02_triangle_with_vertex_buffer.vert.spv
+exec_quiet glslc 02_with_buffers.frag -o 02_with_buffers.frag.spv
+exec_quiet glslc 02_with_buffers.vert -o 02_with_buffers.vert.spv
 
 echo "Shaders Compiled!"

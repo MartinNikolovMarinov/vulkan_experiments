@@ -585,9 +585,13 @@ private:
     core::expected<Error> initVulkan() {
         fmt::print("Vulkan initialization\n");
 
-        m_vertices.append({ core::v(0.0f, -0.5f), core::v(1.0f, 0.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, 0.5f), core::v(0.0f, 1.0f, 0.0f) });
-        m_vertices.append({ core::v(-0.5f, 0.5f), core::v(0.0f, 0.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, -0.5f), core::v(1.0f, 0.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, -0.5f), core::v(0.0f, 1.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, 0.5f), core::v(0.0f, 0.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, 0.5f), core::v(1.0f, 1.0f, 1.0f) });
+
+        m_indices.append(0).append(1).append(2)
+                 .append(2).append(3).append(0);
 
         if (auto res = createInstance(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
@@ -636,6 +640,10 @@ private:
         }
 
         if (auto res = createVertexBuffer(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createIndexBuffer(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -1030,7 +1038,7 @@ private:
     core::expected<Error> createGraphicsPipeline() {
         fmt::print("Creating graphics pipeline\n");
 
-        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/02_triangle_with_vertex_buffer.vert.spv";
+        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/02_with_buffers.vert.spv";
 
         fmt::print("  [STEP 1] Load vertex shader code\n");
         core::Arr<u8> vertShaderCode;
@@ -1051,7 +1059,7 @@ private:
             }
         }
 
-        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/02_triangle_with_vertex_buffer.frag.spv";
+        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/02_with_buffers.frag.spv";
 
         fmt::print("  [STEP 2] Load fragment shader code\n");
         core::Arr<u8> fragShaderCode;
@@ -1361,6 +1369,54 @@ private:
         return {};
     }
 
+    core::expected<Error> createIndexBuffer() {
+        VkDeviceSize bufferSize = m_indices.byteLen();
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        {
+            VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            auto res = createBuffer(m_vkPhysicalDevice, m_vkDevice, bufferSize,
+                                    usage, props, stagingBuffer, stagingBufferMemory);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        }
+
+        defer {
+            vkDestroyBuffer(m_vkDevice, stagingBuffer, nullptr);
+            vkFreeMemory(m_vkDevice, stagingBufferMemory, nullptr);
+        };
+
+        void* data;
+        vkMapMemory(m_vkDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+            core::memcopy(data, m_indices.data(), bufferSize);
+        vkUnmapMemory(m_vkDevice, stagingBufferMemory);
+
+        {
+            VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                       VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+            auto res = createBuffer(m_vkPhysicalDevice, m_vkDevice, bufferSize,
+                                    usage, props, m_vkIndexBuffer, m_vkIndexBufferMemory);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        }
+
+        {
+            auto res = copyBuffer(m_vkDevice, m_vkCommandPool, m_vkGraphicsQueue,
+                                  stagingBuffer, m_vkIndexBuffer, bufferSize);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        }
+
+        return {};
+    }
+
     core::expected<Error> createCommandBuffers() {
         fmt::print("Creating command buffers\n");
 
@@ -1494,7 +1550,10 @@ private:
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-            vkCmdDraw(commandBuffer, u32(m_vertices.len()), 1, 0, 0);
+            vkCmdBindIndexBuffer(commandBuffer, m_vkIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+            // vkCmdDraw(commandBuffer, u32(m_vertices.len()), 1, 0, 0);
+            vkCmdDrawIndexed(commandBuffer, u32(m_indices.len()), 1, 0, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -1612,6 +1671,9 @@ private:
         vkDestroyBuffer(m_vkDevice, m_vkVertexBuffer, nullptr);
         vkFreeMemory(m_vkDevice, m_vkVertexBufferMemory, nullptr);
 
+        vkDestroyBuffer(m_vkDevice, m_vkIndexBuffer, nullptr);
+        vkFreeMemory(m_vkDevice, m_vkIndexBufferMemory, nullptr);
+
         vkDestroyPipeline(m_vkDevice, m_vkGraphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_vkDevice, m_vkPipelineLayout, nullptr);
 
@@ -1670,18 +1732,21 @@ private:
     VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
     VkPipeline m_vkGraphicsPipeline = VK_NULL_HANDLE;
     core::Arr<VkFramebuffer> m_vkSwapChainFrameBuffers;
-    VkCommandPool m_vkCommandPool;
+    VkCommandPool m_vkCommandPool = VK_NULL_HANDLE;
     core::Arr<VkCommandBuffer> m_vkCommandBuffers;
     core::Arr<VkSemaphore> m_vkImageAvailableSemaphores;
     core::Arr<VkSemaphore> m_vkRenderFinishedSemaphores;
     core::Arr<VkFence> m_vkInFlightFences;
     u64 m_currentFrame = 0;
     core::Arr<Vertex> m_vertices;
-    VkBuffer m_vkVertexBuffer;
-    VkDeviceMemory m_vkVertexBufferMemory;
+    VkBuffer m_vkVertexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_vkVertexBufferMemory = VK_NULL_HANDLE;
+    core::Arr<u16> m_indices;
+    VkBuffer m_vkIndexBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_vkIndexBufferMemory = VK_NULL_HANDLE;
 };
 
-// NEXT: Start from here -> https://vulkan-tutorial.com/Vertex_buffers/Staging_buffer
+// NEXT: Start from here -> https://vulkan-tutorial.com/Uniform_buffers/Descriptor_layout_and_buffer
 
 i32 main() {
     constexpr const char* APP_TITLE = "Vulkan Example App";
