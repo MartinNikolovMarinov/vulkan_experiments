@@ -16,4 +16,7 @@ exec_quiet glslc 01_hardcoded.vert -o 01_hardcoded.vert.spv
 exec_quiet glslc 02_with_buffers.frag -o 02_with_buffers.frag.spv
 exec_quiet glslc 02_with_buffers.vert -o 02_with_buffers.vert.spv
 
+exec_quiet glslc 03_with_ubo.frag -o 03_with_ubo.frag.spv
+exec_quiet glslc 03_with_ubo.vert -o 03_with_ubo.vert.spv
+
 echo "Shaders Compiled!"

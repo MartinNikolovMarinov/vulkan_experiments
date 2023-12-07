@@ -1,6 +1,7 @@
 #include <init_core.h>
 
 #include <cstdlib>
+#include <chrono> // FIXME: Remove this when time primitives are done in corelib.
 
 enum ErrorType : i32 {
     None,
@@ -35,6 +36,10 @@ enum ErrorType : i32 {
     VulkanFailedToFindMemoryType,
     VulkanVertexBufferMemoryAllocationFailed,
     VulkanVertexBufferMemoryBindingFailed,
+    VulkanDescriptorSetLayoutCreationFailed,
+    VulkanMapMemoryFailed,
+    VulkanDescriptorPoolCreationFailed,
+    VulkanDescriptorSetAllocationFailed,
 
     FailedToLoadShader,
 
@@ -75,6 +80,10 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanFailedToFindMemoryType:             return "VulkanFailedToFindMemoryType";
         case VulkanVertexBufferMemoryAllocationFailed: return "VulkanVertexBufferMemoryAllocationFailed";
         case VulkanVertexBufferMemoryBindingFailed:    return "VulkanVertexBufferMemoryBindingFailed";
+        case VulkanDescriptorSetLayoutCreationFailed:  return "VulkanDescriptorSetLayoutCreationFailed";
+        case VulkanMapMemoryFailed:                    return "VulkanMapMemoryFailed";
+        case VulkanDescriptorPoolCreationFailed:       return "VulkanDescriptorPoolCreationFailed";
+        case VulkanDescriptorSetAllocationFailed:      return "VulkanDescriptorSetAllocationFailed";
 
         case FailedToLoadShader:                       return "FailedToLoadShader";
 
@@ -112,6 +121,18 @@ struct Vertex {
         return attributeDescriptions;
     }
 };
+
+// Alignment requiremnets are provided in the Vulkan Specification here -
+// https://registry.khronos.org/vulkan/specs/1.3-extensions/html/chap15.html#interfaces-resources-layout
+struct UniformBufferObject {
+    alignas(16) core::mat4f model;
+    alignas(16) core::mat4f view;
+    alignas(16) core::mat4f proj;
+};
+
+constexpr static core::vec3f X_AXIS = core::v(1.f, 0.f, 0.f);
+constexpr static core::vec3f Y_AXIS = core::v(0.f, 1.f, 0.f);
+constexpr static core::vec3f Z_AXIS = core::v(0.f, 0.f, 1.f);
 
 struct Error {
     Sb description = {};
@@ -627,6 +648,10 @@ private:
             return core::unexpected<Error>(core::move(res.err()));
         }
 
+        if (auto res = createDescriptorSetLayout(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
         if (auto res = createGraphicsPipeline(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
@@ -644,6 +669,18 @@ private:
         }
 
         if (auto res = createIndexBuffer(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createUniformBuffers(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createDescriptorPool(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createDescriptorSets(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -1038,7 +1075,7 @@ private:
     core::expected<Error> createGraphicsPipeline() {
         fmt::print("Creating graphics pipeline\n");
 
-        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/02_with_buffers.vert.spv";
+        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/03_with_ubo.vert.spv";
 
         fmt::print("  [STEP 1] Load vertex shader code\n");
         core::Arr<u8> vertShaderCode;
@@ -1059,7 +1096,7 @@ private:
             }
         }
 
-        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/02_with_buffers.frag.spv";
+        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/03_with_ubo.frag.spv";
 
         fmt::print("  [STEP 2] Load fragment shader code\n");
         core::Arr<u8> fragShaderCode;
@@ -1152,7 +1189,8 @@ private:
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        // rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
         rasterizer.depthBiasConstantFactor = 0.0f;
         rasterizer.depthBiasClamp = 0.0f;
@@ -1183,8 +1221,9 @@ private:
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &m_vkDescriptorSetLayout;
 
         fmt::print("  [STEP 4] Create pipeline layout\n");
 
@@ -1277,6 +1316,26 @@ private:
         return {};
     }
 
+    core::expected<Error> createDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = nullptr;
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if (vkCreateDescriptorSetLayout(m_vkDevice, &layoutInfo, nullptr, &m_vkDescriptorSetLayout) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan descriptor set layout creation failed", VulkanDescriptorSetLayoutCreationFailed });
+        }
+
+        return {};
+    }
+
     core::expected<Error> createFramebuffers() {
         fmt::print("Creating framebuffers\n");
 
@@ -1343,7 +1402,9 @@ private:
         };
 
         void* data;
-        vkMapMemory(m_vkDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+        if (vkMapMemory(m_vkDevice, stagingBufferMemory, 0, bufferSize, 0, &data) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan vertex buffer mapping failed", VulkanMapMemoryFailed });
+        }
             core::memcopy(data, m_vertices.data(), bufferSize);
         vkUnmapMemory(m_vkDevice, stagingBufferMemory);
 
@@ -1391,7 +1452,9 @@ private:
         };
 
         void* data;
-        vkMapMemory(m_vkDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+        if (vkMapMemory(m_vkDevice, stagingBufferMemory, 0, bufferSize, 0, &data) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan index buffer mapping failed", VulkanMapMemoryFailed });
+        }
             core::memcopy(data, m_indices.data(), bufferSize);
         vkUnmapMemory(m_vkDevice, stagingBufferMemory);
 
@@ -1412,6 +1475,91 @@ private:
             if (res.hasErr()) {
                 return core::unexpected<Error>(core::move(res.err()));
             }
+        }
+
+        return {};
+    }
+
+    core::expected<Error> createUniformBuffers() {
+        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        m_vkUniformBuffers.fill(0, 0, MAX_FRAMES_IN_FLIGHT);
+        m_vkUniformBuffersMemory.fill(0, 0, MAX_FRAMES_IN_FLIGHT);
+        m_vkUniformBuffersMapped.fill(0, 0, MAX_FRAMES_IN_FLIGHT);
+
+        for (addr_size i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            auto& ubo = m_vkUniformBuffers[i];
+            auto& uboMemory = m_vkUniformBuffersMemory[i];
+            VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            VkBufferUsageFlags usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+            auto res = createBuffer(m_vkPhysicalDevice, m_vkDevice, bufferSize, usage, props, ubo, uboMemory);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+
+            void** uboMapped = &m_vkUniformBuffersMapped[i];
+            if (vkMapMemory(m_vkDevice, uboMemory, 0, bufferSize, 0, uboMapped) != VK_SUCCESS) {
+                return core::unexpected<Error>({ "Vulkan uniform buffer mapping failed", VulkanMapMemoryFailed });
+            }
+        }
+
+        return {};
+    }
+
+    core::expected<Error> createDescriptorPool() {
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount = u32(MAX_FRAMES_IN_FLIGHT);
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = u32(MAX_FRAMES_IN_FLIGHT);
+
+        if (vkCreateDescriptorPool(m_vkDevice, &poolInfo, nullptr, &m_vkDescriptorPool) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan descriptor pool creation failed", VulkanDescriptorPoolCreationFailed });
+        }
+
+        return {};
+    }
+
+    core::expected<Error> createDescriptorSets() {
+        core::Arr<VkDescriptorSetLayout> layouts (MAX_FRAMES_IN_FLIGHT);
+        layouts.fill(m_vkDescriptorSetLayout, 0, MAX_FRAMES_IN_FLIGHT);
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_vkDescriptorPool;
+        allocInfo.descriptorSetCount = u32(MAX_FRAMES_IN_FLIGHT);
+        allocInfo.pSetLayouts = layouts.data();
+
+        m_vkDescriptorSets.fill(VK_NULL_HANDLE, 0, MAX_FRAMES_IN_FLIGHT);
+        if (vkAllocateDescriptorSets(m_vkDevice, &allocInfo, m_vkDescriptorSets.data()) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan descriptor set allocation failed", VulkanDescriptorSetAllocationFailed });
+        }
+
+         for (addr_size i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = m_vkUniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
+
+            VkWriteDescriptorSet descriptorWrite{};
+            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrite.dstSet = m_vkDescriptorSets[i];
+            descriptorWrite.dstBinding = 0; // Binding number constant in the shader.
+            descriptorWrite.dstArrayElement = 0;
+
+            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrite.descriptorCount = 1;
+
+            descriptorWrite.pBufferInfo = &bufferInfo; // For descriptors that refer to buffer data.
+            descriptorWrite.pImageInfo = nullptr; // For descriptors that refer image data.
+            descriptorWrite.pTexelBufferView = nullptr; // For descriptors that refer to buffer views.
+
+            vkUpdateDescriptorSets(m_vkDevice, 1, &descriptorWrite, 0, nullptr);
         }
 
         return {};
@@ -1506,6 +1654,17 @@ private:
 
 #pragma endregion
 
+    void mainLoop() {
+        fmt::print("Starting Main loop\n");
+
+        while (!glfwWindowShouldClose(m_glfwWindow)) {
+            glfwPollEvents();
+            drawFrame();
+        }
+
+        vkDeviceWaitIdle(m_vkDevice);
+    }
+
     core::expected<Error> recordCommandBuffer(VkCommandBuffer commandBuffer, u32 idx) {
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1552,6 +1711,9 @@ private:
 
             vkCmdBindIndexBuffer(commandBuffer, m_vkIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vkPipelineLayout, 0, 1,
+                                    &m_vkDescriptorSets[m_currentFrame], 0, nullptr);
+
             // vkCmdDraw(commandBuffer, u32(m_vertices.len()), 1, 0, 0);
             vkCmdDrawIndexed(commandBuffer, u32(m_indices.len()), 1, 0, 0, 0);
 
@@ -1564,15 +1726,23 @@ private:
         return {};
     }
 
-    void mainLoop() {
-        fmt::print("Starting Main loop\n");
+    void updateUniformBuffer(u64 currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
 
-        while (!glfwWindowShouldClose(m_glfwWindow)) {
-            glfwPollEvents();
-            drawFrame();
-        }
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        f32 time = std::chrono::duration<f32, std::chrono::seconds::period>(currentTime - startTime).count();
 
-        vkDeviceWaitIdle(m_vkDevice);
+        UniformBufferObject ubo{};
+        ubo.model = core::rotateRight(core::mat4f::identity(), Z_AXIS, core::degToRad(time * 90.0f));
+        ubo.view = core::lookAtRH(core::v(2.0f, 2.0f, 2.0f), core::v(0.0f, 0.0f, 0.0f), Z_AXIS);
+        core::radians fovy = core::degToRad(45.0f);
+        f32 aspectRatio = f32(m_vkSwapChainExtent.width) / f32(m_vkSwapChainExtent.height);
+        f32 nearPlane = 0.1f;
+        f32 farPlane = 10.0f;
+        ubo.proj = core::perspectiveRH_ZO(fovy, aspectRatio, nearPlane, farPlane);
+        ubo.proj[1][1] *= -1; // Flip the Y coordinate. Vulklan uses a different coordinate system than OpenGL.
+
+        core::memcopy(m_vkUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
 
     void drawFrame() {
@@ -1601,11 +1771,17 @@ private:
             }
         }
 
+        // 2. Update descriptors
+
+        updateUniformBuffer(m_currentFrame);
+
+        // 3. Reset the fence before using it again.
+
         if (auto res = vkResetFences(m_vkDevice, 1, &m_vkInFlightFences[m_currentFrame]); res != VK_SUCCESS) {
             Panic("Failed to reset fence.");
         }
 
-        // 3. Record a command buffer which draws the scene onto the image
+        // 4. Record a command buffer which draws the scene onto the image
 
         if (auto res = vkResetCommandBuffer(m_vkCommandBuffers[m_currentFrame], 0); res != VK_SUCCESS) {
             Panic("Failed to reset command buffer.");
@@ -1614,7 +1790,7 @@ private:
             Panic("Failed to record command buffer.");
         }
 
-        // 4. Submit the recorded command buffer
+        // 5. Submit the recorded command buffer
 
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1635,7 +1811,7 @@ private:
             Panic("Failed to submit draw command buffer.");
         }
 
-        // 5. Present the swapchain image
+        // 6. Present the swapchain image
 
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -1667,6 +1843,15 @@ private:
         fmt::print("Running cleaning up code\n");
 
         cleanupSwapChain();
+
+        for (addr_size i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            vkDestroyBuffer(m_vkDevice, m_vkUniformBuffers[i], nullptr);
+            vkFreeMemory(m_vkDevice, m_vkUniformBuffersMemory[i], nullptr);
+        }
+
+        vkDestroyDescriptorPool(m_vkDevice, m_vkDescriptorPool, nullptr);
+
+        vkDestroyDescriptorSetLayout(m_vkDevice, m_vkDescriptorSetLayout, nullptr);
 
         vkDestroyBuffer(m_vkDevice, m_vkVertexBuffer, nullptr);
         vkFreeMemory(m_vkDevice, m_vkVertexBufferMemory, nullptr);
@@ -1728,6 +1913,7 @@ private:
     VkExtent2D m_vkSwapChainExtent = {};
     core::Arr<VkImageView> m_vkSwapChainImageViews;
     VkFormat m_vkChainImageFormat = VK_FORMAT_UNDEFINED;
+    VkDescriptorSetLayout m_vkDescriptorSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout m_vkPipelineLayout = VK_NULL_HANDLE;
     VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
     VkPipeline m_vkGraphicsPipeline = VK_NULL_HANDLE;
@@ -1744,9 +1930,14 @@ private:
     core::Arr<u16> m_indices;
     VkBuffer m_vkIndexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_vkIndexBufferMemory = VK_NULL_HANDLE;
+    core::Arr<VkBuffer> m_vkUniformBuffers;
+    core::Arr<VkDeviceMemory> m_vkUniformBuffersMemory;
+    core::Arr<void*> m_vkUniformBuffersMapped;
+    VkDescriptorPool m_vkDescriptorPool = VK_NULL_HANDLE;
+    core::Arr<VkDescriptorSet> m_vkDescriptorSets;
 };
 
-// NEXT: Start from here -> https://vulkan-tutorial.com/Uniform_buffers/Descriptor_layout_and_buffer
+// NEXT: Start from here -> https://vulkan-tutorial.com/Texture_mapping/Images
 
 i32 main() {
     constexpr const char* APP_TITLE = "Vulkan Example App";
