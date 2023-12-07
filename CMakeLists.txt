@@ -48,6 +48,9 @@ add_custom_command(
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/core)
 
+# stb_image library:
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/include)
+
 # fmt library:
 target_link_libraries(${PROJECT_NAME} PRIVATE fmt)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt)
