@@ -11,6 +11,9 @@ set(src_files
     main.cpp
 
     src/init_core.cpp
+
+    src/lib_wrappers/tiny_obj_loader_wrap.cpp
+    src/lib_wrappers/stb_wrap.cpp
 )
 
 # Create the executable:
@@ -50,6 +53,9 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/core)
 
 # stb_image library:
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/include)
+
+# Tiny OBJ Loader library:
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyobjloader/include)
 
 # fmt library:
 target_link_libraries(${PROJECT_NAME} PRIVATE fmt)
