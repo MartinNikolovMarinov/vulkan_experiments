@@ -1,7 +1,8 @@
 #include <init_core.h>
 
 #include <cstdlib>
-#include <chrono> // FIXME: Remove this when time primitives are done in corelib.
+#include <string> // I am forced by tinyobjloader to use std::string.
+#include <chrono>
 
 enum ErrorType : i32 {
     None,
@@ -47,8 +48,8 @@ enum ErrorType : i32 {
     VulkanTextureSamplerCreationFailed,
 
     FailedToLoadShader,
-
-    STBIFailedToLoadImage,
+    FailedToLoadModel,
+    FailedToLoadImage,
 
     SENTINEL
 };
@@ -98,8 +99,8 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanTextureSamplerCreationFailed:       return "VulkanTextureSamplerCreationFailed";
 
         case FailedToLoadShader:                       return "FailedToLoadShader";
-
-        case STBIFailedToLoadImage:                    return "STBIFailedToLoadImage";
+        case FailedToLoadModel:                        return "FailedToLoadModel";
+        case FailedToLoadImage:                        return "FailedToLoadImage";
 
         case SENTINEL: return "SENTINEL";
     }
@@ -141,6 +142,18 @@ struct Vertex {
         return attributeDescriptions;
     }
 };
+
+template <> addr_size core::hash(const Vertex& key) {
+    addr_size h = addr_size(core::simpleHash_32(reinterpret_cast<const void*>(&key), sizeof(key)));
+    return h;
+}
+
+template <> bool core::eq(const Vertex& a, const Vertex& b) {
+    bool ret = a.pos.equals(b.pos) &&
+               a.color.equals(b.color) &&
+               a.texCoord.equals(b.texCoord);
+    return ret;
+}
 
 // Alignment requiremnets are provided in the Vulkan Specification here -
 // https://registry.khronos.org/vulkan/specs/1.3-extensions/html/chap15.html#interfaces-resources-layout
@@ -252,7 +265,7 @@ VkDebugUtilsMessengerCreateInfoEXT createDebugMessengerInfo() {
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
     createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
                                  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-                                //  VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT; // TODO: Do I want this?
+                                //  VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT;
     createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                                 VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                                 VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
@@ -572,23 +585,6 @@ private:
 #pragma region Initialize Vulkan
 
     core::expected<Error> initVulkan() {
-        m_vertices.append({ core::v(-0.5f, -0.5f, 0.0f), core::v(1.0f, 0.0f, 0.0f), core::v(1.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, -0.5f, 0.0f), core::v(0.0f, 1.0f, 0.0f), core::v(0.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, 0.5f, 0.0f), core::v(0.0f, 0.0f, 1.0f), core::v(0.0f, 1.0f) });
-        m_vertices.append({ core::v(-0.5f, 0.5f, 0.0f), core::v(1.0f, 1.0f, 1.0f), core::v(1.0f, 1.0f) });
-
-        m_indices.append(0).append(1).append(2)
-                 .append(2).append(3).append(0);
-
-        m_vertices.append({ core::v(-0.5f, -0.5f, -0.5f), core::v(1.0f, 0.0f, 0.0f), core::v(1.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, -0.5f, -0.5f), core::v(0.0f, 1.0f, 0.0f), core::v(0.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, 0.5f, -0.5f), core::v(0.0f, 0.0f, 1.0f), core::v(0.0f, 1.0f) });
-        m_vertices.append({ core::v(-0.5f, 0.5f, -0.5f), core::v(1.0f, 1.0f, 1.0f), core::v(1.0f, 1.0f) });
-
-        m_indices.append(4).append(5).append(6)
-                 .append(6).append(7).append(4);
-
-
         if (auto res = createInstance(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
@@ -652,6 +648,10 @@ private:
         }
 
         if (auto res = createTextureSampler(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = loadModels(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -783,7 +783,7 @@ private:
             return core::unexpected<Error>({ "Vulkan instance creation failed", VulkanInstanceCreationFailed });
         }
 
-        // FIXME: Needs additional code to work on MACOS!
+        // TODO: Needs additional code to work on MACOS!
 
         return {};
     }
@@ -1437,12 +1437,12 @@ private:
     }
 
     core::expected<Error> createTextureImage() {
-        constexpr const char* TEXTURE_PATH = ASSETS_PATH "/textures/texture.jpg";
+        constexpr const char* TEXTURE_PATH = ASSETS_PATH "/textures/viking_room.png";
         i32 texW, texH, texChannels;
 
         stbi_uc* pixels = stbi_load(TEXTURE_PATH, &texW, &texH, &texChannels, STBI_rgb_alpha);
         if (!pixels) {
-            return core::unexpected<Error>({ "Failed to load texture image", STBIFailedToLoadImage });
+            return core::unexpected<Error>({ "Failed to load texture image", FailedToLoadImage });
         }
         defer { stbi_image_free(pixels); };
 
@@ -1638,6 +1638,67 @@ private:
         vkQueueWaitIdle(m_vkGraphicsQueue);
 
         vkFreeCommandBuffers(m_vkDevice, m_vkCommandPool, 1, &commandBuffer);
+    }
+
+    core::expected<Error> loadModels() {
+        using namespace tinyobj;
+        using namespace std;
+
+        constexpr const char* MODEL_PATH = ASSETS_PATH "/models/viking_room.obj";
+
+        attrib_t attrib;
+        vector<shape_t> shapes;
+        vector<material_t> materials;
+        string warn, err;
+
+        if (!LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH)) {
+            Error ret;
+            ret.type = FailedToLoadModel;
+            ret.description = "Failed to load model: ";
+            ret.description.append(MODEL_PATH);
+            ret.description.append(", reason: ");
+            ret.description.append(err.c_str());
+            return core::unexpected(core::move(ret));
+        }
+
+        if (!warn.empty()) {
+            fmt::print("WARN: {}\n", warn.c_str());
+        }
+
+        core::HashMap<Vertex, u32> uniqueVertices;
+
+        for (const auto& shape : shapes) {
+            for (const auto& index : shape.mesh.indices) {
+                Vertex vertex{};
+
+                vertex.pos = core::v(
+                    attrib.vertices[3 * index.vertex_index + 0],
+                    attrib.vertices[3 * index.vertex_index + 1],
+                    attrib.vertices[3 * index.vertex_index + 2]
+                );
+
+                vertex.texCoord = core::v(
+                    attrib.texcoords[2 * index.texcoord_index + 0],
+                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+                );
+
+                vertex.color = core::v(1.0f, 1.0f, 1.0f);
+
+                u32* indicesCount = uniqueVertices.get(vertex);
+                if (!indicesCount) {
+                    uniqueVertices.put(vertex, u32(m_vertices.len()));
+                    m_vertices.append(vertex);
+                    indicesCount = uniqueVertices.get(vertex);
+                }
+                m_indices.append(*indicesCount);
+            }
+        }
+
+        fmt::print("Loaded model: {}\n", MODEL_PATH);
+        fmt::print("Vertices: {}\n", m_vertices.len());
+        fmt::print("Indices: {}\n", m_indices.len());
+
+        return {};
     }
 
     core::expected<Error> createVertexBuffer() {
@@ -2084,7 +2145,7 @@ private:
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-            vkCmdBindIndexBuffer(commandBuffer, m_vkIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+            vkCmdBindIndexBuffer(commandBuffer, m_vkIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_vkPipelineLayout, 0, 1,
                                     &m_vkDescriptorSets[m_currentFrame], 0, nullptr);
@@ -2108,13 +2169,13 @@ private:
         f32 time = std::chrono::duration<f32, std::chrono::seconds::period>(currentTime - startTime).count();
 
         UniformBufferObject ubo{};
-        ubo.model = core::rotateRight(core::mat4f::identity(), Z_AXIS, core::degToRad(time * 90.0f));
+        ubo.model = core::rotateRight(core::mat4f::identity(), Z_AXIS, core::degToRad(time * 40.0f));
         ubo.view = core::lookAtRH(core::v(2.0f, 2.0f, 2.0f), core::v(0.0f, 0.0f, 0.0f), Z_AXIS);
         core::radians fovy = core::degToRad(45.0f);
         f32 aspectRatio = f32(m_vkSwapChainExtent.width) / f32(m_vkSwapChainExtent.height);
         f32 nearPlane = 0.1f;
         f32 farPlane = 10.0f;
-        ubo.proj = core::perspectiveRH_ZO(fovy, aspectRatio, nearPlane, farPlane);
+        ubo.proj = core::perspectiveRH_NO(fovy, aspectRatio, nearPlane, farPlane);
         ubo.proj[1][1] *= -1; // Flip the Y coordinate. Vulklan uses a different coordinate system than OpenGL.
 
         core::memcopy(m_vkUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
@@ -2274,6 +2335,9 @@ private:
     i32 m_height = 0;
     const char* m_title = nullptr;
 
+    // Application statekeeping:
+    u64 m_currentFrame = 0;
+
     // Vulkan statekeeping:
     VkInstance m_vkInstance = VK_NULL_HANDLE;
     core::Arr<const char*> m_vkActiveExtensions;
@@ -2297,27 +2361,42 @@ private:
     VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
     VkPipeline m_vkGraphicsPipeline = VK_NULL_HANDLE;
     core::Arr<VkFramebuffer> m_vkSwapChainFrameBuffers;
+
+    // Command Pools and Buffers
     VkCommandPool m_vkCommandPool = VK_NULL_HANDLE;
     core::Arr<VkCommandBuffer> m_vkCommandBuffers;
+
+    // Sync Objects
     core::Arr<VkSemaphore> m_vkImageAvailableSemaphores;
     core::Arr<VkSemaphore> m_vkRenderFinishedSemaphores;
     core::Arr<VkFence> m_vkInFlightFences;
-    u64 m_currentFrame = 0;
+
+    // Vertices
     core::Arr<Vertex> m_vertices;
     VkBuffer m_vkVertexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_vkVertexBufferMemory = VK_NULL_HANDLE;
-    core::Arr<u16> m_indices;
+
+    // Indices
+    core::Arr<u32> m_indices;
     VkBuffer m_vkIndexBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_vkIndexBufferMemory = VK_NULL_HANDLE;
+
+    // Uniform Buffers
     core::Arr<VkBuffer> m_vkUniformBuffers;
     core::Arr<VkDeviceMemory> m_vkUniformBuffersMemory;
     core::Arr<void*> m_vkUniformBuffersMapped;
+
+    // Descriptor Pools and Sets
     VkDescriptorPool m_vkDescriptorPool = VK_NULL_HANDLE;
     core::Arr<VkDescriptorSet> m_vkDescriptorSets;
+
+    // Textures
     VkImage m_vkTextureImage;
     VkDeviceMemory m_vkTextureImageMemory;
     VkImageView m_vkTextureImageView;
     VkSampler m_vkTextureSampler;
+
+    // Depth Buffer Image
     VkImage m_vkDepthImage;
     VkDeviceMemory m_vkDepthImageMemory;
     VkImageView m_vkDepthImageView;

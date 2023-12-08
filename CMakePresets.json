@@ -25,7 +25,7 @@
 			"binaryDir": "${sourceDir}/build",
 			"cacheVariables": {
 				"CMAKE_BUILD_TYPE": "Release",
-				"CORE_ASSERT_ENABLED": "ON",
+				"CORE_ASSERT_ENABLED": "OFF",
 				"CORE_LIBRARY_SHARED": "ON",
 				"CORE_BUILD_TESTS": "OFF",
 				"CORE_RUN_COMPILETIME_TESTS": "OFF",
