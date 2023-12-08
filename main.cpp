@@ -111,7 +111,7 @@ const char* errorTypeToCptr(ErrorType t) {
 }
 
 struct Vertex {
-    core::vec2f pos;
+    core::vec3f pos;
     core::vec3f color;
     core::vec2f texCoord;
 
@@ -128,7 +128,7 @@ struct Vertex {
 
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; // vec2
+        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT; // vec3
         attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
         attributeDescriptions[1].binding = 0;
@@ -538,8 +538,6 @@ struct Application {
 private:
 
     core::expected<Error> initWindow() {
-        fmt::print("GLFW window initialization\n");
-
         if (i32 ret = glfwInit(); ret != GLFW_TRUE) {
             return core::unexpected<Error>({ "GLFW initialization failed", GLFWInitFailed });
         }
@@ -577,15 +575,22 @@ private:
 #pragma region Initialize Vulkan
 
     core::expected<Error> initVulkan() {
-        fmt::print("Vulkan initialization\n");
-
-        m_vertices.append({ core::v(-0.5f, -0.5f), core::v(1.0f, 0.0f, 0.0f), core::v(1.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, -0.5f), core::v(0.0f, 1.0f, 0.0f), core::v(0.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, 0.5f), core::v(0.0f, 0.0f, 1.0f), core::v(0.0f, 1.0f) });
-        m_vertices.append({ core::v(-0.5f, 0.5f), core::v(1.0f, 1.0f, 1.0f), core::v(1.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, -0.5f, 0.0f), core::v(1.0f, 0.0f, 0.0f), core::v(1.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, -0.5f, 0.0f), core::v(0.0f, 1.0f, 0.0f), core::v(0.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, 0.5f, 0.0f), core::v(0.0f, 0.0f, 1.0f), core::v(0.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, 0.5f, 0.0f), core::v(1.0f, 1.0f, 1.0f), core::v(1.0f, 1.0f) });
 
         m_indices.append(0).append(1).append(2)
                  .append(2).append(3).append(0);
+
+        m_vertices.append({ core::v(-0.5f, -0.5f, -0.5f), core::v(1.0f, 0.0f, 0.0f), core::v(1.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, -0.5f, -0.5f), core::v(0.0f, 1.0f, 0.0f), core::v(0.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, 0.5f, -0.5f), core::v(0.0f, 0.0f, 1.0f), core::v(0.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, 0.5f, -0.5f), core::v(1.0f, 1.0f, 1.0f), core::v(1.0f, 1.0f) });
+
+        m_indices.append(4).append(5).append(6)
+                 .append(6).append(7).append(4);
+
 
         if (auto res = createInstance(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
@@ -629,11 +634,15 @@ private:
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createFramebuffers(); res.hasErr()) {
+        if (auto res = createCommandPool(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
-        if (auto res = createCommandPool(); res.hasErr()) {
+        if (auto res = createDepthResources(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createFramebuffers(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -681,10 +690,7 @@ private:
     }
 
     core::expected<Error> createInstance() {
-        fmt::print("Vulkan instance creation\n");
-
         // [STEP 1] Create Vulkan application info:
-        fmt::print("  [STEP 1] Create Vulkan application info\n");
 
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -695,14 +701,12 @@ private:
         appInfo.apiVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
 
         // [STEP 2] Create Vulkan instance info:
-        fmt::print("  [STEP 2] Create Vulkan instance info\n");
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
 
         // [STEP 3] Extensions. Identify required Vulkan extensions and check if the system supports them:
-        fmt::print("  [STEP 3] Extensions\n");
 
         {
             // Get all supported Vulkan extensions:
@@ -745,7 +749,6 @@ private:
         }
 
         // [STEP 4] Validation layers. Request the required validation layers if the program is build in debug mode:
-        fmt::print("  [STEP 4] Validation layers\n");
 
         #if USE_VALIDATORS
             // Get all supported Vulkan validation layers:
@@ -778,7 +781,6 @@ private:
         #endif
 
         // [STEP 5] Finally. Create the Vulkan instance:
-        fmt::print("  [STEP 5] Create the Vulkan instance\n");
 
         if (vkCreateInstance(&createInfo, nullptr, &m_vkInstance) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan instance creation failed", VulkanInstanceCreationFailed });
@@ -790,8 +792,6 @@ private:
     }
 
     core::expected<Error> createDebugMessenger() {
-        fmt::print("Creating Debug Messenger\n");
-
         VkDebugUtilsMessengerCreateInfoEXT createInfo = createDebugMessengerInfo();
         if (wrap_vkCreateDebugUtilsMessengerEXT(m_vkInstance, &createInfo, nullptr, &m_vkDebugMessenger) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan debug messenger creation failed", VulkanDebugMessengerCreationFailed });
@@ -800,8 +800,6 @@ private:
     }
 
     core::expected<Error> pickPhysicalDevice() {
-        fmt::print("Picking a physical device\n");
-
         // Query the number of devices that support Vulkan;
         u32 deviceCount = 0;
         vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, nullptr);
@@ -876,10 +874,8 @@ private:
     }
 
     core::expected<Error> createLogicalDevice() {
-        fmt::print("Creating logical device\n");
 
         // [STEP 1] Create a queue family info.
-        fmt::print("  [STEP 1] Create a queue family info\n");
         QueueFamilyIndices queueIndices = findQueueFamilies(m_vkPhysicalDevice, m_vkSurface);
         if (!queueIndices.isComplete()) {
             return core::unexpected<Error>({ "Vulkan queue family indices not complete", VulkanDeviceCreationFailed });
@@ -908,12 +904,10 @@ private:
         });
 
         // [STEP 2] Specify used device features.
-        fmt::print("  [STEP 2] Specify used device features\n");
         VkPhysicalDeviceFeatures deviceFeatures{};
         deviceFeatures.samplerAnisotropy = VK_TRUE;
 
         // [STEP 3] Create the logical device info.
-        fmt::print("  [STEP 3] Create the logical device info\n");
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
@@ -937,13 +931,11 @@ private:
         #endif
 
         // [STEP 4] Create the device.
-        fmt::print("  [STEP 4] Create the device\n");
         if (vkCreateDevice(m_vkPhysicalDevice, &createInfo, nullptr, &m_vkDevice) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan logical device creation failed", VulkanDeviceCreationFailed });
         }
 
         // [STEP 5] Get the graphics queue.
-        fmt::print("  [STEP 5] Get the graphics queues\n");
         vkGetDeviceQueue(m_vkDevice, queueIndices.graphicsFamily, 0, &m_vkGraphicsQueue);
         vkGetDeviceQueue(m_vkDevice, queueIndices.presentFamily, 0, &m_vkPresetQueue);
 
@@ -951,8 +943,6 @@ private:
     }
 
     core::expected<Error> createSurface() {
-        fmt::print("Creating a Surface\n");
-
         // Vulkan can't interface with the windowing system directly to present images to the screen.
         // It needs an intermediary object called a Surface, which is platform dependent and here it's handled by GLFW.
         if (glfwCreateWindowSurface(m_vkInstance, m_glfwWindow, nullptr, &m_vkSurface) != VK_SUCCESS) {
@@ -963,8 +953,6 @@ private:
     }
 
     core::expected<Error> createSwapChain() {
-        fmt::print("Creating a Swap Chain\n");
-
         SwapChainSupportDetails swapChainSupport;
         {
             auto ret = querySwapChainSupport(m_vkPhysicalDevice, m_vkSurface);
@@ -1035,12 +1023,10 @@ private:
     }
 
     core::expected<Error> createImageViews() {
-        fmt::print("Creating image views\n");
-
         m_vkSwapChainImageViews = core::Arr<VkImageView> (m_vkSwapChainImages.len());
 
         for (addr_size i = 0; i < m_vkSwapChainImages.len(); i++) {
-            auto res = createImageView(m_vkSwapChainImages[i], m_vkSwapChainImageFormat);
+            auto res = createImageView(m_vkSwapChainImages[i], m_vkSwapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
             if (res.hasErr()) {
                 return core::unexpected<Error>(core::move(res.err()));
             }
@@ -1051,11 +1037,8 @@ private:
     }
 
     core::expected<Error> createGraphicsPipeline() {
-        fmt::print("Creating graphics pipeline\n");
-
         static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/04_with_texture.vert.spv";
 
-        fmt::print("  [STEP 1] Load vertex shader code\n");
         core::Arr<u8> vertShaderCode;
         {
             auto res = core::fileReadEntire(VERT_SHADER_PATH, vertShaderCode);
@@ -1076,7 +1059,6 @@ private:
 
         static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/04_with_texture.frag.spv";
 
-        fmt::print("  [STEP 2] Load fragment shader code\n");
         core::Arr<u8> fragShaderCode;
         {
             auto res = core::fileReadEntire(FRAG_SHADER_PATH, fragShaderCode);
@@ -1095,7 +1077,6 @@ private:
             }
         }
 
-        fmt::print("  [STEP 3] Create shader modules\n");
         VkShaderModule vertShaderModule;
         {
             auto ret = createShaderModule(vertShaderCode);
@@ -1197,13 +1178,22 @@ private:
         colorBlending.blendConstants[2] = 0.0f;
         colorBlending.blendConstants[3] = 0.0f;
 
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        depthStencil.minDepthBounds = 0.0f;
+        depthStencil.maxDepthBounds = 1.0f;
+        depthStencil.stencilTestEnable = VK_FALSE;
+        depthStencil.front = {};
+        depthStencil.back = {};
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &m_vkDescriptorSetLayout;
-
-        fmt::print("  [STEP 4] Create pipeline layout\n");
 
         if (vkCreatePipelineLayout(m_vkDevice, &pipelineLayoutInfo, nullptr, &m_vkPipelineLayout) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan pipeline layout creation failed", VulkanPipelineCreationFailed });
@@ -1224,8 +1214,7 @@ private:
         pipelineInfo.renderPass = m_vkRenderPass;
         pipelineInfo.subpass = 0;
         pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-
-        fmt::print("  [STEP 5] Create graphics pipeline\n");
+        pipelineInfo.pDepthStencilState = &depthStencil;
 
         if (vkCreateGraphicsPipelines(m_vkDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_vkGraphicsPipeline) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan graphics pipeline creation failed", VulkanPipelineCreationFailed });
@@ -1249,8 +1238,6 @@ private:
     }
 
     core::expected<Error> createRenderPass() {
-        fmt::print("Creating render pass\n");
-
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format = m_vkSwapChainImageFormat;
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1261,27 +1248,45 @@ private:
         colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+        VkAttachmentDescription depthAttachment{};
+        depthAttachment.format = findDepthFormat();
+        depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
         VkAttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = 0;
         colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depthAttachmentRef{};
+        depthAttachmentRef.attachment = 1;
+        depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
+        subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
         VkSubpassDependency dependency{};
         dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         dependency.dstSubpass = 0;
-        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
         dependency.srcAccessMask = 0;
-        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        VkAttachmentDescription attachments[] = { colorAttachment, depthAttachment };
+        constexpr addr_size attachmentsCount = sizeof(attachments) / sizeof(attachments[0]);
 
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = 1;
-        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.attachmentCount = attachmentsCount;
+        renderPassInfo.pAttachments = attachments;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
         renderPassInfo.dependencyCount = 1;
@@ -1325,19 +1330,19 @@ private:
     }
 
     core::expected<Error> createFramebuffers() {
-        fmt::print("Creating framebuffers\n");
-
         m_vkSwapChainFrameBuffers = core::Arr<VkFramebuffer> (m_vkSwapChainImageViews.len());
 
         for (addr_size i = 0; i < m_vkSwapChainImageViews.len(); i++) {
             VkImageView attachments[] = {
-                m_vkSwapChainImageViews[i]
+                m_vkSwapChainImageViews[i],
+                m_vkDepthImageView
             };
+            constexpr addr_size attachmentsCount = sizeof(attachments) / sizeof(attachments[0]);
 
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = m_vkRenderPass;
-            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.attachmentCount = attachmentsCount;
             framebufferInfo.pAttachments = attachments;
             framebufferInfo.width = m_vkSwapChainExtent.width;
             framebufferInfo.height = m_vkSwapChainExtent.height;
@@ -1352,8 +1357,6 @@ private:
     }
 
     core::expected<Error> createCommandPool() {
-        fmt::print("Creating command pool\n");
-
         QueueFamilyIndices queueFamilyIndices = findQueueFamilies(m_vkPhysicalDevice, m_vkSurface);
 
         VkCommandPoolCreateInfo poolInfo{};
@@ -1364,6 +1367,74 @@ private:
         if (vkCreateCommandPool(m_vkDevice, &poolInfo, nullptr, &m_vkCommandPool) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan command pool creation failed", VulkanCommandPoolCreationFailed });
         }
+
+        return {};
+    }
+
+    VkFormat findSupportedFormat(const core::Arr<VkFormat>& candidates,
+                                 VkImageTiling tiling,
+                                 VkFormatFeatureFlags features) {
+
+        for (addr_size i = 0; i < candidates.len(); i++) {
+            VkFormat format = candidates[i];
+
+            VkFormatProperties props;
+            vkGetPhysicalDeviceFormatProperties(m_vkPhysicalDevice, format, &props);
+
+            if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+                return format;
+            }
+            else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+
+        return VK_FORMAT_UNDEFINED;
+    }
+
+    VkFormat findDepthFormat() {
+        core::Arr<VkFormat> candidates (3);
+        candidates[0] = VK_FORMAT_D32_SFLOAT;
+        candidates[1] = VK_FORMAT_D32_SFLOAT_S8_UINT;
+        candidates[2] = VK_FORMAT_D24_UNORM_S8_UINT;
+
+        VkFormat ret = findSupportedFormat(candidates,
+                                           VK_IMAGE_TILING_OPTIMAL,
+                                           VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        return ret;
+    }
+
+    bool hasStencilComponent(VkFormat format) {
+        bool ret = format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+                   format == VK_FORMAT_D24_UNORM_S8_UINT;
+        return ret;
+    }
+
+    core::expected<Error> createDepthResources() {
+        VkFormat depthFormat = findDepthFormat();
+
+        {
+            VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
+            VkImageUsageFlags usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+            auto res = createImage(m_vkSwapChainExtent.width, m_vkSwapChainExtent.height, depthFormat,
+                                tiling, usage, props, m_vkDepthImage, m_vkDepthImageMemory);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+        }
+
+        {
+            auto res = createImageView(m_vkDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
+            }
+
+            m_vkDepthImageView = core::move(res.value());
+        }
+
+        transitionImageLayout(m_vkDepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
         return {};
     }
@@ -1427,7 +1498,7 @@ private:
     }
 
     core::expected<Error> createTextureImageView() {
-        auto res = createImageView(m_vkTextureImage, VK_FORMAT_R8G8B8A8_SRGB);
+        auto res = createImageView(m_vkTextureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
         if (res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
@@ -1511,21 +1582,21 @@ private:
             return core::unexpected<Error>({ "Vulkan texture image memory allocation failed", VulkanTextureImageMemoryAllocationFailed });
         }
 
-        if (vkBindImageMemory(m_vkDevice, m_vkTextureImage, imageMemory, 0) != VK_SUCCESS) {
+        if (vkBindImageMemory(m_vkDevice, image, imageMemory, 0) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan texture image memory binding failed", VulkanTextureImageMemoryBindingFailed });
         }
 
         return {};
     }
 
-    core::expected<VkImageView, Error> createImageView(VkImage image, VkFormat format) {
+    core::expected<VkImageView, Error> createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlag) {
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = image;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = format;
 
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.aspectMask = aspectFlag;
         viewInfo.subresourceRange.baseMipLevel = 0;
         viewInfo.subresourceRange.levelCount = 1;
         viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -1770,8 +1841,6 @@ private:
     }
 
     core::expected<Error> createCommandBuffers() {
-        fmt::print("Creating command buffers\n");
-
         m_vkCommandBuffers = core::Arr<VkCommandBuffer> (MAX_FRAMES_IN_FLIGHT);
 
         VkCommandBufferAllocateInfo allocInfo{};
@@ -1788,8 +1857,6 @@ private:
     }
 
     core::expected<Error> createSyncObjects() {
-        fmt::print("Creating sync objects\n");
-
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
@@ -1817,8 +1884,6 @@ private:
     }
 
     core::expected<Error> recreateSwapChain() {
-        fmt::println("Recreating swapchain");
-
         glfwGetFramebufferSize(m_glfwWindow, &m_width, &m_height);
         while (m_width == 0 || m_height == 0) {
             glfwGetFramebufferSize(m_glfwWindow, &m_width, &m_height);
@@ -1834,6 +1899,10 @@ private:
         }
 
         if (auto res = createImageViews(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createDepthResources(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
 
@@ -1858,7 +1927,7 @@ private:
         return {};
     }
 
-    void transitionImageLayout(VkImage image, VkFormat, VkImageLayout oldLayout, VkImageLayout newLayout) {
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
         VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
         VkImageMemoryBarrier barrier{};
@@ -1870,7 +1939,18 @@ private:
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
         barrier.image = image;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+        if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+            if (hasStencilComponent(format)) {
+                barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+            }
+        }
+        else {
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+
         barrier.subresourceRange.baseMipLevel = 0;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.baseArrayLayer = 0;
@@ -1885,13 +1965,18 @@ private:
 
             sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
             destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        }
-        else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
             sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
         }
         else {
             Assert(false, "unsupported layout transition!");
@@ -1929,6 +2014,10 @@ private:
     }
 
     void cleanupSwapChain() {
+        vkDestroyImageView(m_vkDevice, m_vkDepthImageView, nullptr);
+        vkDestroyImage(m_vkDevice, m_vkDepthImage, nullptr);
+        vkFreeMemory(m_vkDevice, m_vkDepthImageMemory, nullptr);
+
         for (addr_size i = 0; i < m_vkSwapChainFrameBuffers.len(); i++) {
             vkDestroyFramebuffer(m_vkDevice, m_vkSwapChainFrameBuffers[i], nullptr);
         }
@@ -1943,8 +2032,6 @@ private:
 #pragma endregion
 
     void mainLoop() {
-        fmt::print("Starting Main loop\n");
-
         while (!glfwWindowShouldClose(m_glfwWindow)) {
             glfwPollEvents();
             drawFrame();
@@ -1970,10 +2057,13 @@ private:
         renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = m_vkSwapChainExtent;
 
-        VkClearValue clearColor{};
-        clearColor.color = { 0.0f, 0.0f, 0.0f, 1.0f };
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearColor;
+        VkClearValue clearValues[2] = {};
+        constexpr addr_size clearValuesCount = sizeof(clearValues) / sizeof(clearValues[0]);
+        clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+        clearValues[1].depthStencil = { 1.0f, 0 };
+
+        renderPassInfo.clearValueCount = clearValuesCount;
+        renderPassInfo.pClearValues = clearValues;
 
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -2128,8 +2218,6 @@ private:
     }
 
     void cleanup() {
-        fmt::print("Running cleaning up code\n");
-
         cleanupSwapChain();
 
         vkDestroySampler(m_vkDevice, m_vkTextureSampler, nullptr);
@@ -2233,6 +2321,9 @@ private:
     VkDeviceMemory m_vkTextureImageMemory;
     VkImageView m_vkTextureImageView;
     VkSampler m_vkTextureSampler;
+    VkImage m_vkDepthImage;
+    VkDeviceMemory m_vkDepthImageMemory;
+    VkImageView m_vkDepthImageView;
 };
 
 // NEXT: Start from here -> https://vulkan-tutorial.com/Texture_mapping/Images
