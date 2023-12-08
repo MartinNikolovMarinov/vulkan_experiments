@@ -46,6 +46,8 @@ enum ErrorType : i32 {
     VulkanTextureImageCreationFailed,
     VulkanTextureImageMemoryAllocationFailed,
     VulkanTextureImageMemoryBindingFailed,
+    VulkanImageViewCreationFailed,
+    VulkanTextureSamplerCreationFailed,
 
     FailedToLoadShader,
 
@@ -95,6 +97,8 @@ const char* errorTypeToCptr(ErrorType t) {
         case VulkanTextureImageCreationFailed:         return "VulkanTextureImageCreationFailed";
         case VulkanTextureImageMemoryAllocationFailed: return "VulkanTextureImageMemoryAllocationFailed";
         case VulkanTextureImageMemoryBindingFailed:    return "VulkanTextureImageMemoryBindingFailed";
+        case VulkanImageViewCreationFailed:            return "VulkanImageViewCreationFailed";
+        case VulkanTextureSamplerCreationFailed:       return "VulkanTextureSamplerCreationFailed";
 
         case FailedToLoadShader:                       return "FailedToLoadShader";
 
@@ -631,6 +635,14 @@ private:
             return core::unexpected<Error>(core::move(res.err()));
         }
 
+        if (auto res = createTextureImageView(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
+        if (auto res = createTextureSampler(); res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+
         if (auto res = createVertexBuffer(); res.hasErr()) {
             return core::unexpected<Error>(core::move(res.err()));
         }
@@ -844,6 +856,14 @@ private:
             }
         }
 
+        // Check if feature support is adaquite:
+        VkPhysicalDeviceFeatures supportedFeatures;
+        vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+        if (!supportedFeatures.samplerAnisotropy) {
+            // No anisotropic filtering support.
+            return false;
+        }
+
         // The most important check for device suitability is the type of queue families supported by the device.
         QueueFamilyIndices indices = findQueueFamilies(device, surface);
         bool ret = indices.isComplete();
@@ -885,6 +905,7 @@ private:
         // [STEP 2] Specify used device features.
         fmt::print("  [STEP 2] Specify used device features\n");
         VkPhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.samplerAnisotropy = VK_TRUE;
 
         // [STEP 3] Create the logical device info.
         fmt::print("  [STEP 3] Create the logical device info\n");
@@ -1003,7 +1024,7 @@ private:
         m_vkSwapChainImages = core::Arr<VkImage> (imageCount);
         vkGetSwapchainImagesKHR(m_vkDevice, m_vkSwapChain, &imageCount, m_vkSwapChainImages.data());
         m_vkSwapChainExtent = extent;
-        m_vkChainImageFormat = surfaceFormat.format;
+        m_vkSwapChainImageFormat = surfaceFormat.format;
 
         return {};
     }
@@ -1014,26 +1035,32 @@ private:
         m_vkSwapChainImageViews = core::Arr<VkImageView> (m_vkSwapChainImages.len());
 
         for (addr_size i = 0; i < m_vkSwapChainImages.len(); i++) {
-            VkImageViewCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image = m_vkSwapChainImages[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = m_vkChainImageFormat;
+            // VkImageViewCreateInfo createInfo{};
+            // createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            // createInfo.image = m_vkSwapChainImages[i];
+            // createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            // createInfo.format = m_vkSwapChainImageFormat;
 
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            // createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            // createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            // createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            // createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
 
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel = 0;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount = 1;
+            // createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            // createInfo.subresourceRange.baseMipLevel = 0;
+            // createInfo.subresourceRange.levelCount = 1;
+            // createInfo.subresourceRange.baseArrayLayer = 0;
+            // createInfo.subresourceRange.layerCount = 1;
 
-            if (vkCreateImageView(m_vkDevice, &createInfo, nullptr, &m_vkSwapChainImageViews[i]) != VK_SUCCESS) {
-                return core::unexpected<Error>({ "Vulkan image view creation failed",  });
+            // if (vkCreateImageView(m_vkDevice, &createInfo, nullptr, &m_vkSwapChainImageViews[i]) != VK_SUCCESS) {
+            //     return core::unexpected<Error>({ "Vulkan image view creation failed",  });
+            // }
+
+            auto res = createImageView(m_vkSwapChainImages[i], m_vkSwapChainImageFormat);
+            if (res.hasErr()) {
+                return core::unexpected<Error>(core::move(res.err()));
             }
+            m_vkSwapChainImageViews[i] = core::move(res.value());
         }
 
         return {};
@@ -1241,7 +1268,7 @@ private:
         fmt::print("Creating render pass\n");
 
         VkAttachmentDescription colorAttachment{};
-        colorAttachment.format = m_vkChainImageFormat;
+        colorAttachment.format = m_vkSwapChainImageFormat;
         colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
         colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1405,6 +1432,47 @@ private:
         return {};
     }
 
+    core::expected<Error> createTextureImageView() {
+        auto res = createImageView(m_vkTextureImage, VK_FORMAT_R8G8B8A8_SRGB);
+        if (res.hasErr()) {
+            return core::unexpected<Error>(core::move(res.err()));
+        }
+        m_vkTextureImageView = core::move(res.value());
+        return {};
+    }
+
+    core::expected<Error> createTextureSampler() {
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.anisotropyEnable = VK_TRUE;
+
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(m_vkPhysicalDevice, &properties);
+        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE; // false means [0, 1], true means [0, texW] or [0, texH]
+
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        samplerInfo.mipLodBias = 0.0f;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
+
+        if (vkCreateSampler(m_vkDevice, &samplerInfo, nullptr, &m_vkTextureSampler) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan texture sampler creation failed", VulkanTextureSamplerCreationFailed });
+        }
+
+        return {};
+    }
+
     core::expected<Error> createImage(u32 width, u32 height, VkFormat format, VkImageTiling tiling,
                                       VkImageUsageFlags usage, VkMemoryPropertyFlags props, VkImage& image,
                                       VkDeviceMemory& imageMemory) {
@@ -1454,6 +1522,27 @@ private:
         }
 
         return {};
+    }
+
+    core::expected<VkImageView, Error> createImageView(VkImage image, VkFormat format) {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkImageView imageView;
+        if (vkCreateImageView(m_vkDevice, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+            return core::unexpected<Error>({ "Vulkan texture image view creation failed", VulkanImageViewCreationFailed });
+        }
+
+        return imageView;
     }
 
     VkCommandBuffer beginSingleTimeCommands() {
@@ -2035,6 +2124,9 @@ private:
 
         cleanupSwapChain();
 
+        vkDestroySampler(m_vkDevice, m_vkTextureSampler, nullptr);
+        vkDestroyImageView(m_vkDevice, m_vkTextureImageView, nullptr);
+
         vkDestroyImage(m_vkDevice, m_vkTextureImage, nullptr);
         vkFreeMemory(m_vkDevice, m_vkTextureImageMemory, nullptr);
 
@@ -2106,7 +2198,7 @@ private:
     core::Arr<VkImage> m_vkSwapChainImages;
     VkExtent2D m_vkSwapChainExtent = {};
     core::Arr<VkImageView> m_vkSwapChainImageViews;
-    VkFormat m_vkChainImageFormat = VK_FORMAT_UNDEFINED;
+    VkFormat m_vkSwapChainImageFormat = VK_FORMAT_UNDEFINED;
     VkDescriptorSetLayout m_vkDescriptorSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout m_vkPipelineLayout = VK_NULL_HANDLE;
     VkRenderPass m_vkRenderPass = VK_NULL_HANDLE;
@@ -2131,6 +2223,8 @@ private:
     core::Arr<VkDescriptorSet> m_vkDescriptorSets;
     VkImage m_vkTextureImage;
     VkDeviceMemory m_vkTextureImageMemory;
+    VkImageView m_vkTextureImageView;
+    VkSampler m_vkTextureSampler;
 };
 
 // NEXT: Start from here -> https://vulkan-tutorial.com/Texture_mapping/Images
