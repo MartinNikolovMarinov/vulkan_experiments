@@ -113,6 +113,7 @@ const char* errorTypeToCptr(ErrorType t) {
 struct Vertex {
     core::vec2f pos;
     core::vec3f color;
+    core::vec2f texCoord;
 
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription bindingDescription{};
@@ -122,8 +123,8 @@ struct Vertex {
         return bindingDescription;
     }
 
-    static core::SArr<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
-        core::SArr<VkVertexInputAttributeDescription, 2> attributeDescriptions (2);
+    static core::SArr<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+        core::SArr<VkVertexInputAttributeDescription, 3> attributeDescriptions (3);
 
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
@@ -134,6 +135,11 @@ struct Vertex {
         attributeDescriptions[1].location = 1;
         attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT; // vec3
         attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT; // vec2
+        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
 
         return attributeDescriptions;
     }
@@ -573,10 +579,10 @@ private:
     core::expected<Error> initVulkan() {
         fmt::print("Vulkan initialization\n");
 
-        m_vertices.append({ core::v(-0.5f, -0.5f), core::v(1.0f, 0.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, -0.5f), core::v(0.0f, 1.0f, 0.0f) });
-        m_vertices.append({ core::v(0.5f, 0.5f), core::v(0.0f, 0.0f, 1.0f) });
-        m_vertices.append({ core::v(-0.5f, 0.5f), core::v(1.0f, 1.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, -0.5f), core::v(1.0f, 0.0f, 0.0f), core::v(1.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, -0.5f), core::v(0.0f, 1.0f, 0.0f), core::v(0.0f, 0.0f) });
+        m_vertices.append({ core::v(0.5f, 0.5f), core::v(0.0f, 0.0f, 1.0f), core::v(0.0f, 1.0f) });
+        m_vertices.append({ core::v(-0.5f, 0.5f), core::v(1.0f, 1.0f, 1.0f), core::v(1.0f, 1.0f) });
 
         m_indices.append(0).append(1).append(2)
                  .append(2).append(3).append(0);
@@ -849,8 +855,7 @@ private:
             }
             SwapChainSupportDetails swapChainSupport = core::move(res.value());
             bool swapChainAdequate = !swapChainSupport.formats.empty() &&
-                                !swapChainSupport.presentModes.empty();
-
+                                     !swapChainSupport.presentModes.empty();
             if (!swapChainAdequate) {
                 return false;
             }
@@ -1035,27 +1040,6 @@ private:
         m_vkSwapChainImageViews = core::Arr<VkImageView> (m_vkSwapChainImages.len());
 
         for (addr_size i = 0; i < m_vkSwapChainImages.len(); i++) {
-            // VkImageViewCreateInfo createInfo{};
-            // createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            // createInfo.image = m_vkSwapChainImages[i];
-            // createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            // createInfo.format = m_vkSwapChainImageFormat;
-
-            // createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            // createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            // createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            // createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-            // createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            // createInfo.subresourceRange.baseMipLevel = 0;
-            // createInfo.subresourceRange.levelCount = 1;
-            // createInfo.subresourceRange.baseArrayLayer = 0;
-            // createInfo.subresourceRange.layerCount = 1;
-
-            // if (vkCreateImageView(m_vkDevice, &createInfo, nullptr, &m_vkSwapChainImageViews[i]) != VK_SUCCESS) {
-            //     return core::unexpected<Error>({ "Vulkan image view creation failed",  });
-            // }
-
             auto res = createImageView(m_vkSwapChainImages[i], m_vkSwapChainImageFormat);
             if (res.hasErr()) {
                 return core::unexpected<Error>(core::move(res.err()));
@@ -1069,7 +1053,7 @@ private:
     core::expected<Error> createGraphicsPipeline() {
         fmt::print("Creating graphics pipeline\n");
 
-        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/03_with_ubo.vert.spv";
+        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/04_with_texture.vert.spv";
 
         fmt::print("  [STEP 1] Load vertex shader code\n");
         core::Arr<u8> vertShaderCode;
@@ -1090,7 +1074,7 @@ private:
             }
         }
 
-        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/03_with_ubo.frag.spv";
+        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/04_with_texture.frag.spv";
 
         fmt::print("  [STEP 2] Load fragment shader code\n");
         core::Arr<u8> fragShaderCode;
@@ -1158,7 +1142,7 @@ private:
         dynamicState.pDynamicStates = dynamicStates;
 
         VkVertexInputBindingDescription bindingDescription = Vertex::getBindingDescription();
-        core::SArr<VkVertexInputAttributeDescription, 2> attributeDescriptions = Vertex::getAttributeDescriptions();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         vertexInputInfo.vertexBindingDescriptionCount = 1;
@@ -1318,10 +1302,20 @@ private:
         uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         uboLayoutBinding.pImmutableSamplers = nullptr;
 
+        VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+        samplerLayoutBinding.binding = 1;
+        samplerLayoutBinding.descriptorCount = 1;
+        samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        samplerLayoutBinding.pImmutableSamplers = nullptr;
+        samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutBinding bindings[2] = { uboLayoutBinding, samplerLayoutBinding };
+        constexpr addr_size bindingCount = sizeof(bindings) / sizeof(bindings[0]);
+
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &uboLayoutBinding;
+        layoutInfo.bindingCount = u32(bindingCount);
+        layoutInfo.pBindings = bindings;
 
         if (vkCreateDescriptorSetLayout(m_vkDevice, &layoutInfo, nullptr, &m_vkDescriptorSetLayout) != VK_SUCCESS) {
             return core::unexpected<Error>({ "Vulkan descriptor set layout creation failed", VulkanDescriptorSetLayoutCreationFailed });
@@ -1704,14 +1698,17 @@ private:
     }
 
     core::expected<Error> createDescriptorPool() {
-        VkDescriptorPoolSize poolSize{};
-        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = u32(MAX_FRAMES_IN_FLIGHT);
+        VkDescriptorPoolSize poolSizes[2] = {};
+        constexpr addr_size poolSizeCount = sizeof(poolSizes) / sizeof(poolSizes[0]);
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = u32(MAX_FRAMES_IN_FLIGHT);
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[1].descriptorCount = u32(MAX_FRAMES_IN_FLIGHT);
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.poolSizeCount = poolSizeCount;
+        poolInfo.pPoolSizes = poolSizes;
         poolInfo.maxSets = u32(MAX_FRAMES_IN_FLIGHT);
 
         if (vkCreateDescriptorPool(m_vkDevice, &poolInfo, nullptr, &m_vkDescriptorPool) != VK_SUCCESS) {
@@ -1742,20 +1739,31 @@ private:
             bufferInfo.offset = 0;
             bufferInfo.range = sizeof(UniformBufferObject);
 
-            VkWriteDescriptorSet descriptorWrite{};
-            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrite.dstSet = m_vkDescriptorSets[i];
-            descriptorWrite.dstBinding = 0; // Binding number constant in the shader.
-            descriptorWrite.dstArrayElement = 0;
+            VkDescriptorImageInfo imageInfo{};
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            imageInfo.imageView = m_vkTextureImageView;
+            imageInfo.sampler = m_vkTextureSampler;
 
-            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrite.descriptorCount = 1;
+            VkWriteDescriptorSet descriptorWrites[2] = {};
+            constexpr addr_size descriptorWriteCount = sizeof(descriptorWrites) / sizeof(descriptorWrites[0]);
 
-            descriptorWrite.pBufferInfo = &bufferInfo; // For descriptors that refer to buffer data.
-            descriptorWrite.pImageInfo = nullptr; // For descriptors that refer image data.
-            descriptorWrite.pTexelBufferView = nullptr; // For descriptors that refer to buffer views.
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = m_vkDescriptorSets[i];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-            vkUpdateDescriptorSets(m_vkDevice, 1, &descriptorWrite, 0, nullptr);
+            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet = m_vkDescriptorSets[i];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &imageInfo;
+
+            vkUpdateDescriptorSets(m_vkDevice, descriptorWriteCount, descriptorWrites, 0, nullptr);
         }
 
         return {};

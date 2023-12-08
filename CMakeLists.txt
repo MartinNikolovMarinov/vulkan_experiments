@@ -31,7 +31,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 # Copy assets tp build directory:
 add_custom_command(TARGET ${PROJECT_NAME}
-    POST_BUILD COMMAND
+    PRE_BUILD COMMAND
     ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/assets
     ${CMAKE_CURRENT_BINARY_DIR}/assets)
@@ -40,7 +40,7 @@ add_custom_command(TARGET ${PROJECT_NAME}
 add_custom_command(
     TARGET ${PROJECT_NAME}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders
-    POST_BUILD COMMAND /bin/bash
+    PRE_BUILD COMMAND /bin/bash
     ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders/compile_shaders.sh
 )
 
