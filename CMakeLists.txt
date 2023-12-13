@@ -1,78 +1,103 @@
 cmake_minimum_required(VERSION 3.3)
 
-project(vulkan_ex)
+project(graphics_programming_examples)
 
-# Global CMake options:
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED true)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # Generates compile_commands.json
 
-set(src_files
-    main.cpp
+# Functions
 
+function(init_target target)
+    target_include_directories(${target}
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    # Add compiler options:
+    target_compile_options(${target} PRIVATE
+        -Wall -Wextra
+        -Wno-unknown-pragmas -Wno-unused-function
+    )
+
+    # Add compiler definitions:
+    target_compile_definitions(${target} PRIVATE
+        -DASSETS_PATH="${CMAKE_CURRENT_BINARY_DIR}/assets/${target}/"
+    )
+
+    # Post build scripts for assets.
+
+    # Copy assets to build directory:
+    add_custom_command(TARGET ${target}
+        POST_BUILD COMMAND
+        ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets/${target}
+        ${CMAKE_CURRENT_BINARY_DIR}/assets/${target}
+    )
+
+    # Compile shaders:
+    add_custom_command(
+        TARGET ${target}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets/${target}/shaders
+        POST_BUILD COMMAND /bin/bash
+        ${CMAKE_CURRENT_BINARY_DIR}/assets/${target}/shaders/compile_shaders.sh
+    )
+endfunction()
+
+function(link_dependencies target)
+    # Core library:
+    target_link_libraries(${target} PRIVATE core)
+
+    # stb_image library:
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/include)
+
+    # Tiny OBJ Loader library:
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyobjloader/include)
+
+    # fmt library:
+    target_link_libraries(${target} PRIVATE fmt)
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt/include)
+
+    # glfw library:
+    target_link_libraries(${target} PRIVATE glfw)
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw/include/GLFW)
+
+    # glm library:
+    target_link_libraries(${target} PRIVATE glm)
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/glm)
+
+    # vulkan
+    find_package(Vulkan REQUIRED)
+    target_link_libraries(${target} PRIVATE Vulkan::Vulkan)
+    target_include_directories(${target} PRIVATE ${Vulkan_INCLUDE_DIRS})
+endfunction()
+
+# Add CMake subdirectories
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/core)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/glm)
+
+# Default source files
+
+set(COMMON_SOURCES
     src/init_core.cpp
 
-    src/lib_wrappers/tiny_obj_loader_wrap.cpp
     src/lib_wrappers/stb_wrap.cpp
+    src/lib_wrappers/tiny_obj_loader_wrap.cpp
 )
 
-# Create the executable:
-add_executable(${PROJECT_NAME} ${src_files})
-target_include_directories(${PROJECT_NAME}
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+# Create targets
 
-# Add compiler options:
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-function)
+add_executable(ex_01 ex_01.cpp ${COMMON_SOURCES})
+add_executable(ex_02 ex_02.cpp ${COMMON_SOURCES})
 
-# Add compiler definitions:
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    -DASSETS_PATH="${CMAKE_CURRENT_BINARY_DIR}/assets/"
-)
+# Setup targets
 
-# Post build script to build shaders:
+init_target(ex_01)
+init_target(ex_02)
 
-# Copy assets tp build directory:
-add_custom_command(TARGET ${PROJECT_NAME}
-    PRE_BUILD COMMAND
-    ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets
-    ${CMAKE_CURRENT_BINARY_DIR}/assets)
+# Link dependencies
 
-# Compile shaders:
-add_custom_command(
-    TARGET ${PROJECT_NAME}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders
-    PRE_BUILD COMMAND /bin/bash
-    ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders/compile_shaders.sh
-)
-
-# Core library:
-target_link_libraries(${PROJECT_NAME} PRIVATE core)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/core)
-
-# stb_image library:
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/include)
-
-# Tiny OBJ Loader library:
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyobjloader/include)
-
-# fmt library:
-target_link_libraries(${PROJECT_NAME} PRIVATE fmt)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/fmt/include)
-
-# glfw library:
-target_link_libraries(${PROJECT_NAME} PRIVATE glfw)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw/include/GLFW)
-
-# glm library:
-target_link_libraries(${PROJECT_NAME} PRIVATE glm)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lib/glm)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/glm)
-
-# vulkan
-find_package(Vulkan REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
-target_include_directories(${PROJECT_NAME} PRIVATE ${Vulkan_INCLUDE_DIRS})
+link_dependencies(ex_01)
+link_dependencies(ex_02)

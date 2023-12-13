@@ -1034,7 +1034,7 @@ private:
     }
 
     core::expected<Error> createGraphicsPipeline() {
-        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "/shaders/04_with_texture.vert.spv";
+        static constexpr const char* VERT_SHADER_PATH = ASSETS_PATH "shaders/04_with_texture.vert.spv";
 
         core::Arr<u8> vertShaderCode;
         {
@@ -1054,7 +1054,7 @@ private:
             }
         }
 
-        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "/shaders/04_with_texture.frag.spv";
+        static constexpr const char* FRAG_SHADER_PATH = ASSETS_PATH "shaders/04_with_texture.frag.spv";
 
         core::Arr<u8> fragShaderCode;
         {
@@ -1434,7 +1434,7 @@ private:
     }
 
     core::expected<Error> createTextureImage() {
-        constexpr const char* TEXTURE_PATH = ASSETS_PATH "/textures/viking_room.png";
+        constexpr const char* TEXTURE_PATH = ASSETS_PATH "textures/viking_room.png";
         i32 texW, texH, texChannels;
 
         stbi_uc* pixels = stbi_load(TEXTURE_PATH, &texW, &texH, &texChannels, STBI_rgb_alpha);
